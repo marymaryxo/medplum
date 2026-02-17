@@ -26,6 +26,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    open: true, // open app in browser when you run npm run dev
   },
   preview: {
     port: 3000,
