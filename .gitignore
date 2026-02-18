@@ -1,5 +1,8 @@
 .DS_Store
 
+# Invalid submodule (no .gitmodules URL) - prevent accidental re-add
+medplum/
+
 # Local files for FileSystemBinaryStorage
 binary/
 
