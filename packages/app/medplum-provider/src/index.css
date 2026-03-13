@@ -57,7 +57,7 @@
 
 /* Patient chat bubbles only: target actual bubble element */
 div[data-chat-sender='patient'] {
-  background-color: #fecaca !important;
-  background: #fecaca !important;
+  background-color: #E5F7F7 !important;
+  background: #E5F7F7 !important;
 }
 

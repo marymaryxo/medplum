@@ -341,27 +341,31 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
 
   const searchMessages = useCallback(async (): Promise<void> => {
     setLoading(true);
-    const searchParams = new URLSearchParams(query);
-    searchParams.append('_sort', '-sent');
-    searchParams.append('sent:missing', 'false');
-    const searchResult = await medplum.searchResources('Communication', searchParams, { cache: 'no-cache' });
-    upsertCommunications(communicationsRef.current, searchResult, setCommunications);
-    // Mark messages as read when recipient views thread (not just when new message arrives via WebSocket)
-    let markedAny = false;
-    if (onMessageReceived && profileRefStr) {
-      for (const comm of searchResult) {
-        const fromSomeoneElse = comm.sender?.reference && getReferenceString(comm.sender as Reference) !== profileRefStr;
-        const notYetRead = !(comm.received && comm.status === 'completed');
-        if (fromSomeoneElse && notYetRead) {
-          onMessageReceived(comm);
-          markedAny = true;
+    try {
+      const searchParams = new URLSearchParams(query);
+      searchParams.append('_sort', '-sent');
+      searchParams.append('sent:missing', 'false');
+      const searchResult = await medplum.searchResources('Communication', searchParams, { cache: 'no-cache' });
+      upsertCommunications(communicationsRef.current, searchResult, setCommunications);
+      // Mark messages as read when recipient views thread (not just when new message arrives via WebSocket)
+      let markedAny = false;
+      if (onMessageReceived && profileRefStr) {
+        for (const comm of searchResult) {
+          const fromSomeoneElse = comm.sender?.reference && getReferenceString(comm.sender as Reference) !== profileRefStr;
+          const notYetRead = !(comm.received && comm.status === 'completed');
+          if (fromSomeoneElse && notYetRead) {
+            onMessageReceived(comm);
+            markedAny = true;
+          }
         }
       }
+      if (markedAny) {
+        onMessagesMarkedAsRead?.();
+      }
+    } finally {
+      // Always clear loading so the composer stays visible even after transient fetch failures.
+      setLoading(false);
     }
-    if (markedAny) {
-      onMessagesMarkedAsRead?.();
-    }
-    setLoading(false);
   }, [medplum, setCommunications, query, onMessageReceived, onMessagesMarkedAsRead, profileRefStr]);
 
   useEffect(() => {
@@ -947,7 +951,7 @@ function ChatBubble(props: ChatBubbleProps): JSX.Element {
         <div
           className={cx(classes.chatBubble, showPatientStyling && classes.chatBubblePatient)}
           {...(showPatientStyling && { 'data-chat-sender': 'patient' })}
-          style={showPatientStyling ? { backgroundColor: '#fecaca' } : undefined}
+          style={showPatientStyling ? { backgroundColor: '#E5F7F7' } : undefined}
         >
           {(content || hasAttachments) && (
             <>
