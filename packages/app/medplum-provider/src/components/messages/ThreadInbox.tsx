@@ -291,9 +291,9 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
           {selectedThread ? (
             <>
               {/* Main chat area */}
-              <Flex direction="column" style={{ flex: 1 }} h="100%" className={classes.rightBorder}>
-                <Paper h="100%">
-                  <Stack h="100%" gap={0}>
+              <Flex direction="column" style={{ flex: 1, minHeight: 0 }} h="100%" className={classes.rightBorder}>
+                <Paper h="100%" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+                  <Stack h="100%" gap={0} style={{ minHeight: 0 }}>
                     <Flex h={64} align="center" justify="space-between" p="md">
                       <Text fw={800} truncate fz="lg">
                         {selectedThread.topic?.text ?? 'Messages'}
@@ -378,7 +378,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                         Thread reassigned to {reassignedToName} and marked as done for you. You can no longer reply.
                       </Alert>
                     )}
-                    <Flex direction="column" style={{ flex: 1 }} h="100%">
+                    <Flex direction="column" style={{ flex: 1, minHeight: 0 }} h="100%">
                       <ThreadChat
                         key={`${getReferenceString(selectedThread)}`}
                         title={'Messages'}

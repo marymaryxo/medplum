@@ -339,8 +339,10 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     [profile, medplum]
   );
 
-  const searchMessages = useCallback(async (): Promise<void> => {
-    setLoading(true);
+  const searchMessages = useCallback(async (showLoading = true): Promise<void> => {
+    if (showLoading) {
+      setLoading(true);
+    }
     try {
       const searchParams = new URLSearchParams(query);
       searchParams.append('_sort', '-sent');
@@ -363,8 +365,10 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
         onMessagesMarkedAsRead?.();
       }
     } finally {
-      // Always clear loading so the composer stays visible even after transient fetch failures.
-      setLoading(false);
+      // Always clear loading after explicit load cycles so the composer stays visible.
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }, [medplum, setCommunications, query, onMessageReceived, onMessagesMarkedAsRead, profileRefStr]);
 
@@ -430,7 +434,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
       return;
     }
     const interval = setInterval(() => {
-      searchMessages().catch((err) => showNotification({ color: 'red', message: normalizeErrorString(err) }));
+      searchMessages(false).catch((err) => showNotification({ color: 'red', message: normalizeErrorString(err) }));
     }, 5000);
     return () => clearInterval(interval);
   }, [disableWebSocket, searchMessages]);
