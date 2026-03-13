@@ -40,15 +40,6 @@
   z-index: 2;
 }
 
-.attachmentPreview {
-  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
-  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  border-radius: var(--mantine-radius-md);
-  padding: var(--mantine-spacing-sm);
-  margin-bottom: var(--mantine-spacing-xs);
-  min-height: 52px;
-}
-
 .chatBubbleOuterWrap {
   max-width: 75%;
   padding-bottom: 10px;
@@ -107,32 +98,61 @@
   text-align: right;
 }
 
-.attachmentChips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.editorAttachmentChips {
+  min-height: 44px;
+  padding: 8px 8px 6px 8px;
+  border-top: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  align-items: center;
+}
+
+.attachmentChip {
+  background-color: #fff;
+  border: 1px solid var(--mantine-color-gray-3);
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+
+.composePaperclip {
+  color: #668891;
+}
+
+.composePaperclip:hover {
+  color: #003848;
+}
+
+.composeSideButton {
+  margin-bottom: 6px;
 }
 
 .richTextRoot {
   border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  border-radius: var(--mantine-radius-sm);
+  border-radius: 8px;
   font-size: var(--mantine-font-size-sm);
+  overflow: hidden;
+}
+
+.richTextDisabled {
+  opacity: 0.55;
 }
 
 .richTextToolbar {
   border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
   padding: 4px;
   min-height: unset;
+  border-radius: 8px 8px 0 0;
 }
 
 .richTextContent {
   min-height: 36px;
   max-height: 160px;
   overflow-y: auto;
+  border-radius: 0 0 8px 8px;
+  margin-top: 0;
 
   & .tiptap {
     min-height: 36px;
     padding: 4px 8px;
+    border-radius: 0 0 8px 8px;
   }
 
   & .tiptap p {

@@ -28,6 +28,7 @@ export default defineConfig({
   server: {
     host: 'localhost',
     port: 3000,
+    allowedHosts: ['fatlike-painfully-erwin.ngrok-free.dev', '.ngrok-free.dev'],
   },
   preview: {
     host: 'localhost',

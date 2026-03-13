@@ -92,8 +92,8 @@ export function App(): JSX.Element | null {
                     icon: (
                       <NotificationIcon
                         resourceType="Communication"
-                        countCriteria={`recipient=${getReferenceString(profile)}&sender:not=${getReferenceString(profile)}&status:not=completed&part-of:missing=false&_summary=count`}
-                        subscriptionCriteria={`Communication?recipient=${getReferenceString(profile)}`}
+                        countCriteria={`recipient=${getReferenceString(profile)}&sender:not=${getReferenceString(profile)}&status:not=completed&part-of:missing=false&part-of:Communication.status=in-progress&_summary=count`}
+                        subscriptionCriteria={`Communication?recipient=${getReferenceString(profile)}&part-of:missing=false&part-of:Communication.status=in-progress`}
                         iconComponent={<IconMail />}
                       />
                     ),

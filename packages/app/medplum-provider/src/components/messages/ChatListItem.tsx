@@ -35,11 +35,21 @@ interface ChatListItemProps {
   lastCommunication: Communication | undefined;
   isSelected: boolean;
   isUnread?: boolean;
+  isReassignedToYou?: boolean;
+  reassignedLabel?: string;
   getThreadUri: (topic: Communication) => string;
 }
 
 export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
-  const { topic, lastCommunication, isSelected, isUnread = false, getThreadUri } = props;
+  const {
+    topic,
+    lastCommunication,
+    isSelected,
+    isUnread = false,
+    isReassignedToYou = false,
+    reassignedLabel,
+    getThreadUri,
+  } = props;
   const patientResource = useResource(topic.subject as Reference<Patient>);
   const patientName = formatHumanName(patientResource?.name?.[0] as HumanName);
   const refId = topic.subject?.reference?.split('/').pop();
@@ -61,7 +71,6 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
   const trimmedMsg = lastMsg?.length && lastMsg.length > 100 ? lastMsg.slice(0, 100) + '...' : lastMsg;
   const senderName = lastCommunication?.sender?.display ? `${lastCommunication?.sender?.display}: ` : '';
   const content = trimmedMsg ? `${senderName} ${trimmedMsg}` : `No messages available`;
-  const topicName = topic.topic?.text ?? content;
 
   return (
     <MedplumLink to={getThreadUri(topic)} underline="never">
@@ -72,6 +81,7 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
         className={cx(classes.contentContainer, {
           [classes.selected]: isSelected,
           [classes.unread]: isUnread,
+          [classes.reassignedToYou]: isReassignedToYou,
         })}
       >
         <ResourceAvatar value={topic.subject as Reference<Patient>} radius="xl" size={36} />
@@ -83,8 +93,13 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
             </Text>
           </Group>
           <Text size="sm" fw={isUnread ? 600 : 400} lineClamp={2} className={classes.content}>
-            {topicName}
+            {content}
           </Text>
+          {reassignedLabel && (
+            <Text className={classes.reassignedLabel} lineClamp={1}>
+              {reassignedLabel}
+            </Text>
+          )}
           <Text size="xs" style={{ marginTop: 2 }} fw={isUnread ? 600 : 400}>
             {lastCommunication ? formatChatTimestamp(lastCommunication.sent) : ''}
           </Text>

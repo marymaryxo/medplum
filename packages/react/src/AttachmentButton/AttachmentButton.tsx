@@ -33,10 +33,13 @@ export function AttachmentButton(props: AttachmentButtonProps): JSX.Element {
 
   function onFileChange(e: ChangeEvent): void {
     killEvent(e);
-    const files = (e.target as HTMLInputElement).files;
+    const input = e.target as HTMLInputElement;
+    const files = input.files;
     if (files) {
       Array.from(files).forEach(processFile);
     }
+    // Allow selecting the same file(s) again in a subsequent pick.
+    input.value = '';
   }
 
   /**

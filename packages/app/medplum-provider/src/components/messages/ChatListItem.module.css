@@ -33,6 +33,22 @@
   background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-9));
 }
 
+.contentContainer.reassignedToYou {
+  background-color: #ffffff;
+  border-left: 3px solid #00b4b3;
+  padding-left: 5px;
+}
+
+.contentContainer.reassignedToYou.unread {
+  background-color: #e5f7f7;
+}
+
+.contentContainer.reassignedToYou.selected {
+  background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-9));
+  border-left: 3px solid #00b4b3;
+  padding-left: 5px;
+}
+
 .unreadDot {
   flex-shrink: 0;
   width: 8px;
@@ -41,4 +57,11 @@
   min-height: 8px;
   border-radius: 50%;
   background-color: #00b4b3;
+}
+
+.reassignedLabel {
+  color: #668891;
+  font-size: 12px;
+  line-height: 1.2;
+  margin-top: 2px;
 }

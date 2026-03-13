@@ -16,8 +16,8 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
-import { convertToTransactionBundle, createReference, getDisplayString } from '@medplum/core';
-import type { Bundle, BundleEntry, Patient, Reference } from '@medplum/fhirtypes';
+import { convertToTransactionBundle, createReference, getDisplayString, getReferenceString } from '@medplum/core';
+import type { Bundle, BundleEntry, Communication, Patient, Reference } from '@medplum/fhirtypes';
 import { showNotification } from '@mantine/notifications';
 import { MedplumLink, useMedplum, useMedplumProfile } from '@medplum/react';
 import {
@@ -60,6 +60,7 @@ export function GetStartedPage(): JSX.Element {
   const [importingPatient, setImportingPatient] = useState(false);
   const [importingVisit, setImportingVisit] = useState(false);
   const [importingConversation, setImportingConversation] = useState(false);
+  const [simulatingReassignment, setSimulatingReassignment] = useState(false);
 
   const handleImportPatient = useCallback(async () => {
     setImportingPatient(true);
@@ -146,6 +147,88 @@ export function GetStartedPage(): JSX.Element {
       setImportingConversation(false);
     }
   }, [medplum, profile, navigate]);
+
+  const handleSimulateAdminReassignment = useCallback(async () => {
+    setSimulatingReassignment(true);
+    try {
+      const profileRef = profile ? createReference(profile) : undefined;
+      const profileRefStr = profileRef ? getReferenceString(profileRef) : undefined;
+      if (!profileRef || !profileRefStr) {
+        showErrorNotification(new Error('You must be signed in'));
+        return;
+      }
+
+      const threadBundle = await medplum.search(
+        'Communication',
+        'part-of:missing=true&_has:Communication:part-of:_id:not=null&_count=50&_sort=-_lastUpdated',
+        { cache: 'no-cache' }
+      );
+      const allThreads =
+        threadBundle.entry
+          ?.map((entry) => entry.resource as Communication | undefined)
+          .filter((c): c is Communication => !!c?.id) ?? [];
+
+      if (allThreads.length === 0) {
+        showErrorNotification(new Error('No threads found. Import a patient conversation first.'));
+        return;
+      }
+
+      const threadsNotAssignedToMe = allThreads.filter(
+        (thread) => !thread.recipient?.some((r) => getReferenceString(r as Reference) === profileRefStr)
+      );
+      const pool = threadsNotAssignedToMe.length > 0 ? threadsNotAssignedToMe : allThreads;
+      const thread = pool[Math.floor(Math.random() * pool.length)];
+
+      const adminPractitioner = (
+        await medplum.searchResources('Practitioner', {
+          _count: '1',
+          _sort: '-_lastUpdated',
+          name: 'Medplum Admin',
+        })
+      )[0];
+      const assignerDisplay = adminPractitioner ? getDisplayString(adminPractitioner) : 'Medplum Admin';
+      const adminRefStr = adminPractitioner?.id ? getReferenceString(createReference(adminPractitioner)) : undefined;
+
+      await medplum.updateResource({
+        ...thread,
+        recipient: [{ reference: profileRefStr, display: getDisplayString(profile) }],
+        status: 'in-progress',
+        identifier: [
+          ...(thread.identifier ?? []).filter(
+            (id) =>
+              !(
+                (id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you') ||
+                id.system === 'https://medplum.com/thread-state/assigner-display'
+              )
+          ),
+          { system: 'https://medplum.com/thread-state', value: 'reassigned-to-you' },
+          { system: 'https://medplum.com/thread-state/assigner-display', value: assignerDisplay },
+        ],
+      });
+
+      const patientName = thread.subject?.display ?? 'the patient';
+      await medplum.createResource<Communication>({
+        resourceType: 'Communication',
+        status: 'in-progress',
+        sender: adminRefStr ? { reference: adminRefStr, display: assignerDisplay } : undefined,
+        recipient: [{ reference: profileRefStr, display: getDisplayString(profile) }],
+        partOf: [{ reference: `Communication/${thread.id}` }],
+        identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
+        payload: [{ contentString: `${assignerDisplay} reassigned ${patientName}'s thread to you.` }],
+        sent: new Date().toISOString(),
+      });
+
+      showNotification({
+        color: 'green',
+        message: `Simulated reassignment from ${assignerDisplay} to ${getDisplayString(profile)}.`,
+      });
+      navigate(`/Communication/${thread.id}?status=in-progress`);
+    } catch (error) {
+      showErrorNotification(error);
+    } finally {
+      setSimulatingReassignment(false);
+    }
+  }, [medplum, navigate, profile]);
 
   const integrations = [
     { src: '/img/integrations/labcorp.png', alt: 'Labcorp', left: 20, top: 20, zIndex: 1, rotation: -2 },
@@ -300,6 +383,19 @@ export function GetStartedPage(): JSX.Element {
                   mt="sm"
                 >
                   {importingConversation ? 'Creating...' : 'Import Patient Convo'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="light"
+                  size="sm"
+                  fullWidth
+                  onClick={handleSimulateAdminReassignment}
+                  loading={simulatingReassignment}
+                  disabled={simulatingReassignment}
+                  leftSection={<IconMessageCircle size={14} />}
+                  mt="xs"
+                >
+                  {simulatingReassignment ? 'Assigning...' : 'Simulate Admin Reassignment'}
                 </Button>
               </Paper>
               <Paper radius="md" withBorder p="lg" shadow="sm" className={classes.card}>

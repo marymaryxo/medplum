@@ -80,6 +80,20 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
 
   const fetchAllCommunications = useCallback(async (): Promise<void> => {
     const searchParams = new URLSearchParams(query);
+    const requestedStatus = searchParams.get('status') as Communication['status'] | null;
+    const profile = medplum.getProfile();
+    const profileRefStr = profile ? getReferenceString(profile) : undefined;
+    if (requestedStatus === 'in-progress') {
+      // Inbox supports split-view reassignment:
+      // assigner keeps thread in Done (parent completed),
+      // assignee still sees it in Inbox via reassignment marker.
+      // We apply strict filtering client-side below.
+      searchParams.delete('status');
+    }
+    if (profileRefStr && requestedStatus === 'in-progress') {
+      // Inbox should only contain threads assigned to current provider.
+      searchParams.append('recipient', profileRefStr);
+    }
     searchParams.append('identifier:not', 'ai-message-topic');
     searchParams.append('part-of:missing', 'true');
     searchParams.append('_has:Communication:part-of:_id:not', 'null');
@@ -121,6 +135,14 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
               display
               reference
             }
+            recipient {
+              display
+              reference
+            }
+            identifier {
+              system
+              value
+            }
             payload {
               contentString
             }
@@ -145,13 +167,34 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
         const childList = response.data[alias] as Communication[] | undefined;
         const lastMessage = childList && childList.length > 0 ? childList[0] : undefined;
         return [parent, lastMessage];
-      })
-      .filter((thread): thread is [Communication, Communication] => thread[1] !== undefined);
+      });
+    const filteredThreads =
+      requestedStatus === 'in-progress'
+        ? threadsWithReplies.filter(([parent, lastMessage]) => {
+            if (parent.status === 'in-progress') {
+              return true;
+            }
+            const reassignedToCurrentUser =
+              !!profileRefStr &&
+              !!parent.recipient?.some((r) => referenceMatches(r.reference, profileRefStr)) &&
+              !!parent.identifier?.some(
+                (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
+              );
+            // Also allow legacy/event-based marker fallback.
+            const reassignedEventForCurrentUser =
+              !!profileRefStr &&
+              !!lastMessage?.identifier?.some(
+                (id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you'
+              ) &&
+              !!lastMessage.recipient?.some((r) => referenceMatches(r.reference, profileRefStr));
+            return reassignedToCurrentUser || reassignedEventForCurrentUser;
+          })
+        : requestedStatus
+          ? threadsWithReplies.filter(([parent]) => parent.status === requestedStatus)
+          : threadsWithReplies;
 
-    setThreadMessages(threadsWithReplies);
+    setThreadMessages(filteredThreads);
 
-    const profile = medplum.getProfile();
-    const profileRefStr = profile ? getReferenceString(profile) : undefined;
     if (profileRefStr) {
       const unreadParams = new URLSearchParams();
       unreadParams.append('recipient', profileRefStr);
@@ -343,4 +386,15 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
     handleMarkThreadAsUnread,
     refreshThreadMessages: fetchAllCommunications,
   };
+}
+
+function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {
+  if (!refStr || !otherRefStr) {
+    return false;
+  }
+  const normalize = (s: string): string => {
+    const parts = s.split('/').filter(Boolean);
+    return parts.length >= 2 ? parts.slice(-2).join('/') : s;
+  };
+  return normalize(refStr) === normalize(otherRefStr);
 }

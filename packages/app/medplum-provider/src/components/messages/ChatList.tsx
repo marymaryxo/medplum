@@ -11,10 +11,29 @@ interface ChatListProps {
   selectedCommunication: Communication | undefined;
   getThreadUri: (topic: Communication) => string;
   unreadThreadIds?: Set<string>;
+  currentProfileRefStr?: string;
+  openedReassignedThreadIds?: Set<string>;
+}
+
+function isReassignedToYouMessage(
+  thread: Communication,
+  message: Communication | undefined
+): boolean {
+  return (
+    !!thread.identifier?.some((id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you') ||
+    !!message?.identifier?.some((id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you')
+  );
 }
 
 export const ChatList = (props: ChatListProps): JSX.Element => {
-  const { threads, selectedCommunication, getThreadUri, unreadThreadIds = new Set() } = props;
+  const {
+    threads,
+    selectedCommunication,
+    getThreadUri,
+    unreadThreadIds = new Set(),
+    currentProfileRefStr,
+    openedReassignedThreadIds = new Set(),
+  } = props;
 
   return (
     <Stack gap={0}>
@@ -23,6 +42,18 @@ export const ChatList = (props: ChatListProps): JSX.Element => {
         const lastCommunication = thread[1];
         const isSelected = selectedCommunication?.id === topicCommunication.id;
         const isUnread = topicCommunication.id ? unreadThreadIds.has(topicCommunication.id) : false;
+        const isReassignedThread = isReassignedToYouMessage(topicCommunication, lastCommunication);
+        const wasOpened = !!topicCommunication.id && openedReassignedThreadIds.has(topicCommunication.id);
+        const reassignedRecipient = topicCommunication.recipient?.[0];
+        const isReassignedToYou =
+          isReassignedThread &&
+          !!currentProfileRefStr &&
+          referenceMatches(reassignedRecipient?.reference, currentProfileRefStr);
+        const reassignedLabel = isReassignedThread
+          ? isReassignedToYou
+            ? 'Reassigned to you'
+            : `Reassigned to ${reassignedRecipient?.display ?? reassignedRecipient?.reference?.split('/').pop() ?? 'another provider'}`
+          : undefined;
         return (
           <Fragment key={topicCommunication.id}>
             <ChatListItem
@@ -30,6 +61,8 @@ export const ChatList = (props: ChatListProps): JSX.Element => {
               lastCommunication={lastCommunication}
               isSelected={isSelected}
               isUnread={isUnread}
+              isReassignedToYou={isReassignedThread && !wasOpened}
+              reassignedLabel={reassignedLabel}
               getThreadUri={getThreadUri}
             />
             <Divider />
@@ -39,3 +72,14 @@ export const ChatList = (props: ChatListProps): JSX.Element => {
     </Stack>
   );
 };
+
+function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {
+  if (!refStr || !otherRefStr) {
+    return false;
+  }
+  const normalize = (s: string): string => {
+    const parts = s.split('/').filter(Boolean);
+    return parts.length >= 2 ? parts.slice(-2).join('/') : s;
+  };
+  return normalize(refStr) === normalize(otherRefStr);
+}

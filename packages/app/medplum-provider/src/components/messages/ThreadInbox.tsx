@@ -21,13 +21,12 @@ import {
 } from '@mantine/core';
 import type { Attachment, Communication, Patient, Practitioner, Reference } from '@medplum/fhirtypes';
 import { PatientSummary, ThreadChat, useMedplum, useResource } from '@medplum/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import {
   IconMessageCircle,
   IconChevronDown,
   IconFolder,
-  IconPaperclip,
   IconPlus,
 } from '@tabler/icons-react';
 import { getDisplayString, getReferenceString, parseSearchRequest } from '@medplum/core';
@@ -42,9 +41,23 @@ import classes from './ThreadInbox.module.css';
 import { useDisclosure } from '@mantine/hooks';
 import { showErrorNotification } from '../../utils/notifications';
 import { showNotification } from '@mantine/notifications';
-import { normalizeErrorString } from '@medplum/core';
 import cx from 'clsx';
 import { Link } from 'react-router';
+
+const REASSIGNED_OPENED_THREAD_IDS_STORAGE_KEY = 'medplum-provider-reassignedOpenedThreadIds';
+
+function loadOpenedReassignedThreadIds(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(REASSIGNED_OPENED_THREAD_IDS_STORAGE_KEY);
+    if (!raw) {
+      return new Set();
+    }
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
 
 /**
  * ThreadInbox is a component that displays a list of threads and allows the user to select a thread to view.
@@ -90,7 +103,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   const [sharedFilesOpened, { open: openSharedFiles, close: closeSharedFiles }] = useDisclosure(false);
   const [reassignOpened, { open: openReassign, close: closeReassign }] = useDisclosure(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [openedReassignedThreadIds, setOpenedReassignedThreadIds] = useState<Set<string>>(loadOpenedReassignedThreadIds);
 
   const currentSearch = useMemo(() => parseSearchRequest(`Communication?${query}`), [query]);
 
@@ -127,33 +140,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     setPendingAttachments([]);
   }, [selectedThread?.id]);
 
-  const handleFileSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (!files?.length) return;
-      try {
-        const newAttachments: Attachment[] = [];
-        for (let i = 0; i < files.length; i++) {
-          const att = await medplum.createAttachment({
-            data: files[i],
-            contentType: files[i].type || 'application/octet-stream',
-            filename: files[i].name,
-          });
-          newAttachments.push(att);
-        }
-        setPendingAttachments((prev) => [...prev, ...newAttachments]);
-      } catch (err) {
-        showNotification({
-          color: 'red',
-          title: 'Upload failed',
-          message: normalizeErrorString(err as Error),
-        });
-      }
-      e.target.value = '';
-    },
-    [medplum]
-  );
-
   const handleTopicStatusChangeWithErrorHandling = async (newStatus: Communication['status']): Promise<void> => {
     try {
       await handleThreadStatusChange(newStatus);
@@ -172,31 +158,104 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   const isReassignedAway =
     !!selectedThread &&
     !!profileRefStr &&
-    !selectedThread.recipient?.some((r) => r.reference === profileRefStr);
+    !selectedThread.recipient?.some((r) => referenceMatches(r.reference, profileRefStr));
 
   const newPractitionerRef = isReassignedAway ? selectedThread?.recipient?.[0] : undefined;
   const newPractitioner = useResource(newPractitionerRef);
   const reassignedToName = newPractitioner
     ? getDisplayString(newPractitioner)
     : newPractitionerRef?.display || 'another provider';
+  const selectedPatient = useResource(selectedThread?.subject as Reference<Patient> | undefined);
+  const selectedThreadLastMessage = useMemo(
+    () => threadMessages.find(([parent]) => parent.id === selectedThread?.id)?.[1],
+    [threadMessages, selectedThread?.id]
+  );
+  const isSelectedThreadReassignedToMe =
+    !!selectedThread?.identifier?.some(
+      (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
+    ) &&
+    !!profileRefStr &&
+    !!selectedThread?.recipient?.some((r) => referenceMatches(r.reference, profileRefStr));
+  const assignerResource = useResource(selectedThreadLastMessage?.sender);
+  const assignerNameFromThreadState = selectedThread?.identifier?.find(
+    (id) => id.system === 'https://medplum.com/thread-state/assigner-display'
+  )?.value;
+  const assignerName =
+    assignerNameFromThreadState ||
+    (assignerResource && getDisplayString(assignerResource)) ||
+    selectedThreadLastMessage?.sender?.display ||
+    'A provider';
+  const selectedPatientName =
+    (selectedPatient && getDisplayString(selectedPatient)) ||
+    selectedThread?.subject?.display ||
+    'Patient';
+  const isSelectedThreadReassigned =
+    !!selectedThread?.identifier?.some(
+      (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
+    );
 
   const handleReassign = useCallback(
     async (providerRef: Reference<Practitioner>, displayName: string): Promise<void> => {
-      if (!selectedThread) return;
+      if (!selectedThread || !profile || !profileRefStr) return;
+      const patientName =
+        (selectedThread.subject && typeof selectedThread.subject === 'object' && selectedThread.subject.display) ||
+        'Patient';
+      const fromProviderName = getDisplayString(profile);
+      const reassignmentMessage = `${fromProviderName} reassigned ${patientName}'s thread to you.`;
+
       await medplum.updateResource({
         ...selectedThread,
         recipient: [{ ...providerRef, display: displayName }],
         status: 'completed',
+        identifier: [
+          ...(selectedThread.identifier ?? []).filter(
+            (id) =>
+              !(
+                (id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you') ||
+                id.system === 'https://medplum.com/thread-state/assigner-display'
+              )
+          ),
+          { system: 'https://medplum.com/thread-state', value: 'reassigned-to-you' },
+          { system: 'https://medplum.com/thread-state/assigner-display', value: fromProviderName },
+        ],
+      });
+      await medplum.createResource<Communication>({
+        resourceType: 'Communication',
+        status: 'in-progress',
+        sender: profileRefStr ? { reference: profileRefStr, display: fromProviderName } : undefined,
+        recipient: [{ reference: providerRef.reference, display: displayName }],
+        partOf: [{ reference: `Communication/${selectedThread.id}` }],
+        identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
+        payload: [{ contentString: reassignmentMessage }],
+        sent: new Date().toISOString(),
       });
       showNotification({
         color: 'green',
-        message: `Thread reassigned to ${displayName} and marked as done for you. You can no longer reply.`,
+        message: `Thread reassigned to ${displayName}. You can no longer reply.`,
       });
       await refreshThreadMessages();
       closeReassign();
     },
-    [selectedThread, medplum, refreshThreadMessages, closeReassign]
+    [selectedThread, profile, profileRefStr, medplum, refreshThreadMessages, closeReassign]
   );
+
+  useEffect(() => {
+    if (!selectedThread?.id || !isSelectedThreadReassigned) {
+      return;
+    }
+    setOpenedReassignedThreadIds((prev) => {
+      if (prev.has(selectedThread.id as string)) {
+        return prev;
+      }
+      const next = new Set(prev).add(selectedThread.id as string);
+      try {
+        sessionStorage.setItem(REASSIGNED_OPENED_THREAD_IDS_STORAGE_KEY, JSON.stringify([...next]));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }, [selectedThread?.id, isSelectedThreadReassigned]);
 
   const skeletonTitleWidths = [80, 72, 68, 64];
   const skeletonSubtitleWidths = [85, 78, 70, 60];
@@ -260,6 +319,8 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       selectedCommunication={selectedThread}
                       getThreadUri={getThreadUri}
                       unreadThreadIds={unreadThreadIds}
+                      currentProfileRefStr={profileRefStr}
+                      openedReassignedThreadIds={openedReassignedThreadIds}
                     />
                   )
                 )}
@@ -300,23 +361,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       </Text>
 
                       <Group gap="xs">
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          multiple
-                          accept="*/*"
-                          style={{ display: 'none' }}
-                          onChange={handleFileSelect}
-                        />
-                        <ActionIcon
-                          variant="subtle"
-                          color="gray"
-                          size="lg"
-                          aria-label="Add attachment"
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <IconPaperclip size={20} stroke={1.5} />
-                        </ActionIcon>
                         <ActionIcon
                           variant="subtle"
                           color="gray"
@@ -375,7 +419,19 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                         style={{ flexShrink: 0 }}
                         styles={{ body: { overflow: 'visible', minHeight: 'auto' } }}
                       >
-                        Thread reassigned to {reassignedToName} and marked as done for you. You can no longer reply.
+                        Thread reassigned to {reassignedToName}. You can no longer reply.
+                      </Alert>
+                    )}
+                    {!isReassignedAway && isSelectedThreadReassignedToMe && selectedThread.status === 'in-progress' && (
+                      <Alert
+                        color="blue"
+                        variant="light"
+                        m="md"
+                        mb={0}
+                        style={{ flexShrink: 0 }}
+                        styles={{ body: { overflow: 'visible', minHeight: 'auto' } }}
+                      >
+                        {assignerName} reassigned {selectedPatientName}'s thread to you.
                       </Alert>
                     )}
                     <Flex direction="column" style={{ flex: 1, minHeight: 0 }} h="100%">
@@ -392,7 +448,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                           selectedThread.id ? userMarkedUnreadThreadIds.has(selectedThread.id) : false
                         }
                         onMessagesMarkedAsRead={refreshThreadMessages}
-                        onOpenAllFiles={openSharedFiles}
                       />
                     </Flex>
                   </Stack>
@@ -473,4 +528,15 @@ function EmptyMessagesState(): JSX.Element {
       </Stack>
     </Flex>
   );
+}
+
+function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {
+  if (!refStr || !otherRefStr) {
+    return false;
+  }
+  const normalize = (s: string): string => {
+    const parts = s.split('/').filter(Boolean);
+    return parts.length >= 2 ? parts.slice(-2).join('/') : s;
+  };
+  return normalize(refStr) === normalize(otherRefStr);
 }

@@ -17,7 +17,6 @@ export interface ThreadChatProps {
   /** External attachment state - when provided, attachments managed by parent */
   readonly attachments?: Attachment[];
   readonly onAttachmentsChange?: (attachments: Attachment[]) => void;
-  readonly onTriggerAttach?: () => void;
   /** When true, use polling instead of WebSocket for new messages */
   readonly disableWebSocket?: boolean;
   /** Ref to trigger attachment from outside (e.g. header button) */
@@ -26,8 +25,6 @@ export interface ThreadChatProps {
   readonly submitFormRef?: React.Ref<() => void>;
   /** Callback to register send function for header button */
   readonly onSendReady?: (send: () => void) => void;
-  /** Called when folder icon is clicked to view all shared files */
-  readonly onOpenAllFiles?: () => void;
   /** Messages sent from outside (e.g. header) - merged into display for immediate feedback */
   readonly injectedMessages?: Communication[];
   /** When true, do not auto-mark messages as read when viewing (e.g. user explicitly marked thread unread) */
@@ -46,11 +43,9 @@ export function ThreadChat(props: ThreadChatProps): JSX.Element | null {
     onError,
     attachments,
     onAttachmentsChange,
-    onTriggerAttach,
     attachmentTriggerRef,
     submitFormRef,
     onSendReady,
-    onOpenAllFiles,
     injectedMessages = [],
     disableAutoMarkAsRead = false,
     onMessagesMarkedAsRead,
@@ -174,11 +169,9 @@ export function ThreadChat(props: ThreadChatProps): JSX.Element | null {
       onError={onError}
       attachments={attachments}
       onAttachmentsChange={onAttachmentsChange}
-      onTriggerAttach={onTriggerAttach}
       attachmentTriggerRef={attachmentTriggerRef}
       submitFormRef={submitFormRef}
       onSendReady={onSendReady}
-      onOpenAllFiles={onOpenAllFiles}
       disableWebSocket={true}
       onMessagesMarkedAsRead={onMessagesMarkedAsRead}
       subjectRef={thread.subject}

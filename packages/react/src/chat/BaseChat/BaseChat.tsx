@@ -26,7 +26,7 @@ import type { ProfileResource, WithId } from '@medplum/core';
 import { getDisplayString, getReferenceString, normalizeErrorString } from '@medplum/core';
 import type { Attachment, Bundle, Communication, Reference } from '@medplum/fhirtypes';
 import { useCachedBinaryUrl, useMedplum, useResource, useSubscription } from '@medplum/react-hooks';
-import { IconArrowRight, IconFolder, IconPaperclip } from '@tabler/icons-react';
+import { IconArrowRight, IconPaperclip } from '@tabler/icons-react';
 import type { JSX, LegacyRef } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
@@ -192,16 +192,12 @@ export interface BaseChatProps extends PaperProps {
   /** External attachment state - when provided, used instead of internal state */
   readonly attachments?: Attachment[];
   readonly onAttachmentsChange?: (attachments: Attachment[]) => void;
-  /** Called when compose-area paperclip is clicked - e.g. to trigger parent's file input */
-  readonly onTriggerAttach?: () => void;
   /** Ref to trigger attachment from outside (e.g. header button) */
   readonly attachmentTriggerRef?: React.Ref<{ trigger: () => void }>;
   /** Ref to trigger form submit from outside (e.g. header send button) */
   readonly submitFormRef?: React.Ref<() => void>;
   /** Callback to register send function for header button (avoids ref timing issues) */
   readonly onSendReady?: (send: () => void) => void;
-  /** Called when folder icon is clicked to view all shared files */
-  readonly onOpenAllFiles?: () => void;
   /** When true, use polling instead of WebSocket for new messages */
   readonly disableWebSocket?: boolean;
   /** Called after marking messages as read on load (so parent can refresh unread list) */
@@ -232,11 +228,9 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     excludeHeader = false,
     attachments: externalAttachments,
     onAttachmentsChange,
-    onTriggerAttach,
     attachmentTriggerRef,
     submitFormRef,
     onSendReady,
-    onOpenAllFiles,
     disableWebSocket = false,
     onMessagesMarkedAsRead,
     subjectRef,
@@ -259,6 +253,14 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
         addKeyboardShortcuts() {
           return {
             Enter: () => {
+              // Preserve normal Enter behavior while editing lists.
+              if (
+                this.editor.isActive('listItem') ||
+                this.editor.isActive('bulletList') ||
+                this.editor.isActive('orderedList')
+              ) {
+                return false;
+              }
               sendRef.current();
               return true;
             },
@@ -282,6 +284,8 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
   const useExternalAttachments = externalAttachments !== undefined && onAttachmentsChange !== undefined;
   const attachments = useExternalAttachments ? externalAttachments : internalAttachments;
   const setAttachments = useExternalAttachments ? onAttachmentsChange : setInternalAttachments;
+  const attachmentsRef = useRef<Attachment[]>(attachments);
+  attachmentsRef.current = attachments;
   const firstScrollRef = useRef(true);
   const initialLoadRef = useRef(true);
 
@@ -490,10 +494,6 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     [attachments, setAttachments]
   );
 
-  const discardAllAttachments = useCallback(() => {
-    setAttachments([]);
-  }, [setAttachments]);
-
   // Disabled because we can make sure this will trigger an update when local profile !== medplum.getProfile()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -509,6 +509,16 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
   const communicationsRef = useRef<Communication[]>(communications);
   communicationsRef.current = communications;
   const prevCommunicationsRef = useRef<Communication[]>(communications);
+  const visibleCommunications = useMemo(
+    () =>
+      communications.filter(
+        (c) =>
+          !c.identifier?.some(
+            (id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you'
+          )
+      ),
+    [communications]
+  );
 
   useEffect(() => {
     if (communications !== prevCommunicationsRef.current) {
@@ -577,8 +587,8 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
               visible={loading || reconnecting}
               style={{ width: parentRect.width, height: parentRect.height, position: 'absolute', zIndex: 1 }}
             />
-            {communications.map((c, i) => {
-              const prevCommunication = i > 0 ? communications[i - 1] : undefined;
+            {visibleCommunications.map((c, i) => {
+              const prevCommunication = i > 0 ? visibleCommunications[i - 1] : undefined;
               const prevCommTime = prevCommunication ? parseSentTime(prevCommunication) : undefined;
               const currCommTime = parseSentTime(c);
               const readStatus = getReadStatus(c);
@@ -649,61 +659,10 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
               accept="*/*"
             />
           )}
-          {attachments.length > 0 && (
-            <div className={classes.attachmentPreview}>
-              <Text size="xs" fw={500} c="dimmed" mb={4}>
-                Review attachments ({attachments.length}) — Send or Discard
-              </Text>
-              <Group gap="xs" wrap="wrap" mb={!inputDisabled ? 'sm' : 0}>
-                {attachments.map((att, i) => (
-                  <Group key={i} gap={4} className={classes.attachmentChip}>
-                    <Text size="xs" truncate maw={180}>
-                      {getAttachmentDisplayName(att)}
-                    </Text>
-                    {!inputDisabled && (
-                      <ActionIcon
-                        size="xs"
-                        variant="subtle"
-                        color="gray"
-                        aria-label="Remove attachment"
-                        onClick={() => removeAttachment(i)}
-                      >
-                        ×
-                      </ActionIcon>
-                    )}
-                  </Group>
-                ))}
-              </Group>
-              {!inputDisabled && (
-                <Group gap="xs">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="filled"
-                    color="blue"
-                    leftSection={<IconArrowRight size={16} stroke={1.5} />}
-                    onClick={performSend}
-                    aria-label="Send message with attachments"
-                  >
-                    Send
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="light"
-                    color="red"
-                    onClick={discardAllAttachments}
-                    aria-label="Discard all attachments"
-                  >
-                    Discard all
-                  </Button>
-                </Group>
-              )}
-            </div>
-          )}
           <AttachmentButton
             onUpload={(att) =>
               useExternalAttachments
-                ? onAttachmentsChange!([...attachments, att])
+                ? onAttachmentsChange!([...(attachmentsRef.current ?? []), att])
                 : setInternalAttachments((prev) => [...prev, att])
             }
             disabled={inputDisabled}
@@ -714,36 +673,23 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                 {!inputDisabled && (
                   <ActionIcon
                     type="button"
-                    size="1.5rem"
+                    size="1.9rem"
                     radius="xl"
                     variant="subtle"
-                    color="gray"
+                    className={cx(classes.composePaperclip, classes.composeSideButton)}
                     aria-label="Add attachment"
                     disabled={uploading}
                     onClick={onClick}
                     style={{ flexShrink: 0 }}
                   >
-                    <IconPaperclip size="1rem" stroke={1.5} />
-                  </ActionIcon>
-                )}
-                {onOpenAllFiles && !inputDisabled && (
-                  <ActionIcon
-                    type="button"
-                    size="1.5rem"
-                    radius="xl"
-                    variant="subtle"
-                    color="gray"
-                    aria-label="View all shared files"
-                    onClick={onOpenAllFiles}
-                    style={{ flexShrink: 0 }}
-                  >
-                    <IconFolder size="1rem" stroke={1.5} />
+                    <IconPaperclip size="1.15rem" stroke={1.5} />
                   </ActionIcon>
                 )}
                 <Box style={{ flex: 1, minWidth: 0 }}>
                   <RichTextEditor
                     editor={editor}
                     variant="subtle"
+                    className={cx(inputDisabled && classes.richTextDisabled)}
                     classNames={{ root: classes.richTextRoot, content: classes.richTextContent, toolbar: classes.richTextToolbar }}
                   >
                     <RichTextEditor.Toolbar>
@@ -770,19 +716,42 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                       </RichTextEditor.ControlsGroup>
                     </RichTextEditor.Toolbar>
                     <RichTextEditor.Content />
+                    {attachments.length > 0 && (
+                      <Group className={classes.editorAttachmentChips} gap={6} wrap="wrap">
+                        {attachments.map((att, i) => (
+                          <Group key={i} gap={4} className={classes.attachmentChip}>
+                            <Text size="xs" truncate maw={180}>
+                              {getAttachmentDisplayName(att)}
+                            </Text>
+                            {!inputDisabled && (
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color="gray"
+                                aria-label="Remove attachment"
+                                onClick={() => removeAttachment(i)}
+                              >
+                                ×
+                              </ActionIcon>
+                            )}
+                          </Group>
+                        ))}
+                      </Group>
+                    )}
                   </RichTextEditor>
                 </Box>
                 {!inputDisabled && (
                   <ActionIcon
                     type="button"
-                    size="1.5rem"
+                    size="1.9rem"
                     radius="xl"
                     color="blue"
                     variant="filled"
+                    className={classes.composeSideButton}
                     aria-label="Send message"
                     onClick={performSend}
                   >
-                    <IconArrowRight size="1rem" stroke={1.5} />
+                    <IconArrowRight size="1.15rem" stroke={1.5} />
                   </ActionIcon>
                 )}
               </Group>
