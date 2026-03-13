@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import type { Communication } from '@medplum/fhirtypes';
+import type { Communication, Practitioner } from '@medplum/fhirtypes';
 import type { JSX } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import { ThreadInbox } from '../../components/messages/ThreadInbox';
@@ -9,6 +9,8 @@ import { formatSearchQuery, Operator } from '@medplum/core';
 import type { SearchRequest } from '@medplum/core';
 import { useEffect, useMemo } from 'react';
 import { normalizeCommunicationSearch } from '../../utils/communication-search';
+import { AdminInboxDashboard } from '../../components/messages/AdminInboxDashboard';
+import { useMedplumProfile } from '@medplum/react';
 /**
  * Fetches
  * @returns A React component that displays all Threads/Topics.
@@ -17,31 +19,65 @@ export function MessagesPage(): JSX.Element {
   const { messageId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const profile = useMedplumProfile();
 
   const currentSearch = useMemo(() => (location.search ? location.search.substring(1) : ''), [location.search]);
+  const rawSearchParams = useMemo(() => new URLSearchParams(currentSearch), [currentSearch]);
+  const readOnlyMode = rawSearchParams.get('readonly') === '1';
+  const viewedProviderRef = rawSearchParams.get('provider') ?? undefined;
+  const view = rawSearchParams.get('view');
+  const isAdminUser = useMemo(() => isAdminProfile(profile), [profile]);
+  const showDashboard = isAdminUser && !readOnlyMode && !messageId && view === 'dashboard';
+  const communicationSearch = useMemo(() => {
+    const params = new URLSearchParams(currentSearch);
+    // UI-only params used for admin read-only mode; never send to FHIR search.
+    params.delete('readonly');
+    params.delete('provider');
+    params.delete('view');
+    return params.toString();
+  }, [currentSearch]);
+
+  const withReadOnlyParams = (searchQuery: string): string => {
+    if (!readOnlyMode || !viewedProviderRef) {
+      return searchQuery;
+    }
+    const params = new URLSearchParams(searchQuery.startsWith('?') ? searchQuery.substring(1) : searchQuery);
+    params.set('readonly', '1');
+    params.set('provider', viewedProviderRef);
+    return `?${params.toString()}`;
+  };
 
   const { normalizedSearch, parsedSearch } = useMemo(
     () =>
       normalizeCommunicationSearch({
-        search: currentSearch,
+        search: communicationSearch,
       }),
-    [currentSearch]
+    [communicationSearch]
   );
 
   useEffect(() => {
+    if (showDashboard) {
+      return;
+    }
     const isDetailView = Boolean(messageId);
-    if (!isDetailView && normalizedSearch !== currentSearch) {
-      const prefix = normalizedSearch ? `?${normalizedSearch}` : '';
+    if (!isDetailView && normalizedSearch !== communicationSearch) {
+      let prefix = normalizedSearch ? `?${normalizedSearch}` : '';
+      if (readOnlyMode && viewedProviderRef) {
+        const params = new URLSearchParams(prefix.startsWith('?') ? prefix.substring(1) : prefix);
+        params.set('readonly', '1');
+        params.set('provider', viewedProviderRef);
+        prefix = `?${params.toString()}`;
+      }
       navigate(`/Communication${prefix}`, { replace: true })?.catch(console.error);
     }
-  }, [currentSearch, navigate, normalizedSearch, messageId]);
+  }, [communicationSearch, messageId, navigate, normalizedSearch, readOnlyMode, viewedProviderRef, showDashboard]);
 
   const onChange = (search: SearchRequest): void => {
-    navigate(`/Communication${formatSearchQuery(search)}`)?.catch(console.error);
+    navigate(`/Communication${withReadOnlyParams(formatSearchQuery(search))}`)?.catch(console.error);
   };
 
   const getThreadUri = (topic: Communication): string => {
-    return `/Communication/${topic.id}${formatSearchQuery(parsedSearch)}`;
+    return `/Communication/${topic.id}${withReadOnlyParams(formatSearchQuery(parsedSearch))}`;
   };
 
   const buildStatusSearch = (value: Communication['status']): SearchRequest => {
@@ -54,25 +90,57 @@ export function MessagesPage(): JSX.Element {
     };
   };
 
-  const inProgressUri = `/Communication${formatSearchQuery(buildStatusSearch('in-progress'))}`;
-  const completedUri = `/Communication${formatSearchQuery(buildStatusSearch('completed'))}`;
+  const inProgressUri = `/Communication${withReadOnlyParams(formatSearchQuery(buildStatusSearch('in-progress')))}`;
+  const completedUri = `/Communication${withReadOnlyParams(formatSearchQuery(buildStatusSearch('completed')))}`;
 
   const onNew = (message: Communication): void => {
     navigate(getThreadUri(message))?.catch(console.error);
   };
 
+  const handleSelectProvider = (providerRef: string): void => {
+    const params = new URLSearchParams();
+    params.set('status', 'in-progress');
+    params.set('readonly', '1');
+    params.set('provider', providerRef);
+    navigate(`/Communication?${params.toString()}`)?.catch(console.error);
+  };
+
   return (
     <div className={classes.container}>
-      <ThreadInbox
-        threadId={messageId}
-        query={formatSearchQuery(parsedSearch).substring(1)}
-        showPatientSummary={true}
-        onNew={onNew}
-        getThreadUri={getThreadUri}
-        onChange={onChange}
-        inProgressUri={inProgressUri}
-        completedUri={completedUri}
-      />
+      {showDashboard ? (
+        <AdminInboxDashboard onSelectProvider={handleSelectProvider} />
+      ) : (
+        <ThreadInbox
+          threadId={messageId}
+          query={formatSearchQuery(parsedSearch).substring(1)}
+          showPatientSummary={true}
+          readOnlyMode={readOnlyMode}
+          viewedProviderRef={viewedProviderRef}
+          onNew={onNew}
+          getThreadUri={getThreadUri}
+          onChange={onChange}
+          inProgressUri={inProgressUri}
+          completedUri={completedUri}
+        />
+      )}
     </div>
   );
+}
+
+function isAdminProfile(profile: Practitioner | { email?: string; username?: string; telecom?: { system?: string; value?: string }[] } | undefined): boolean {
+  if (!profile) {
+    return false;
+  }
+  const directEmail = extractEmail(profile);
+  if (directEmail?.toLowerCase() === 'admin@example.com') {
+    return true;
+  }
+  const practitioner = profile as Practitioner;
+  const practitionerEmail = practitioner.telecom?.find((t) => t.system === 'email')?.value;
+  return practitionerEmail?.toLowerCase() === 'admin@example.com';
+}
+
+function extractEmail(profile: { email?: string; username?: string }): string | undefined {
+  const withEmail = profile as { email?: string; username?: string };
+  return withEmail.email ?? withEmail.username;
 }

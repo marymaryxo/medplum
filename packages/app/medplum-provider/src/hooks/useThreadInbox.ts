@@ -31,6 +31,10 @@ function saveUserMarkedUnreadToStorage(ids: Set<string>): void {
 export interface UseThreadInboxOptions {
   query: string;
   threadId: string | undefined;
+  /** Optional recipient reference used for delegated/read-only inbox views. */
+  recipientRefOverride?: string;
+  /** When true, do not mutate unread/read state while browsing. */
+  readOnlyMode?: boolean;
 }
 
 export interface UseThreadInboxReturn {
@@ -61,7 +65,12 @@ It also provides a function to update the status of the selected thread.
 @returns The thread messages and selected thread.
 @returns A function to update the status of the selected thread.
 */
-export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseThreadInboxReturn {
+export function useThreadInbox({
+  query,
+  threadId,
+  recipientRefOverride,
+  readOnlyMode = false,
+}: UseThreadInboxOptions): UseThreadInboxReturn {
   const medplum = useMedplum();
   const [loading, setLoading] = useState(true);
   const [threadMessages, setThreadMessages] = useState<[Communication, Communication | undefined][]>([]);
@@ -83,16 +92,16 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
     const requestedStatus = searchParams.get('status') as Communication['status'] | null;
     const profile = medplum.getProfile();
     const profileRefStr = profile ? getReferenceString(profile) : undefined;
-    if (requestedStatus === 'in-progress') {
-      // Inbox supports split-view reassignment:
-      // assigner keeps thread in Done (parent completed),
-      // assignee still sees it in Inbox via reassignment marker.
-      // We apply strict filtering client-side below.
-      searchParams.delete('status');
-    }
-    if (profileRefStr && requestedStatus === 'in-progress') {
+    const isAdminUser = isAdminProfile(profile as { email?: string; username?: string; telecom?: { system?: string; value?: string }[] } | undefined);
+    const recipientForQuery = recipientRefOverride ?? profileRefStr;
+    const shouldFilterByRecipient =
+      !!recipientForQuery &&
+      requestedStatus === 'in-progress' &&
+      !(isAdminUser && !recipientRefOverride);
+    if (shouldFilterByRecipient) {
       // Inbox should only contain threads assigned to current provider.
-      searchParams.append('recipient', profileRefStr);
+      // Keep Done behavior aligned with provider experience (not recipient-filtered).
+      searchParams.append('recipient', recipientForQuery);
     }
     searchParams.append('identifier:not', 'ai-message-topic');
     searchParams.append('part-of:missing', 'true');
@@ -160,45 +169,35 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
 
     const response = await medplum.graphql(fullQuery);
 
-    const threadsWithReplies = parents
-      .map((parent) => {
+    const threadsWithReplies: [Communication, Communication | undefined][] = parents.map((parent) => {
         const safeId = parent.id?.replace(/-/g, '') || '';
         const alias = `thread_${safeId}`;
         const childList = response.data[alias] as Communication[] | undefined;
         const lastMessage = childList && childList.length > 0 ? childList[0] : undefined;
         return [parent, lastMessage];
       });
-    const filteredThreads =
-      requestedStatus === 'in-progress'
-        ? threadsWithReplies.filter(([parent, lastMessage]) => {
-            if (parent.status === 'in-progress') {
-              return true;
-            }
-            const reassignedToCurrentUser =
-              !!profileRefStr &&
-              !!parent.recipient?.some((r) => referenceMatches(r.reference, profileRefStr)) &&
-              !!parent.identifier?.some(
-                (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
-              );
-            // Also allow legacy/event-based marker fallback.
-            const reassignedEventForCurrentUser =
-              !!profileRefStr &&
-              !!lastMessage?.identifier?.some(
-                (id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you'
-              ) &&
-              !!lastMessage.recipient?.some((r) => referenceMatches(r.reference, profileRefStr));
-            return reassignedToCurrentUser || reassignedEventForCurrentUser;
-          })
-        : requestedStatus
-          ? threadsWithReplies.filter(([parent]) => parent.status === requestedStatus)
-          : threadsWithReplies;
+    const filteredThreads = requestedStatus
+      ? threadsWithReplies.filter(([parent]) => parent.status === requestedStatus)
+      : threadsWithReplies;
 
-    setThreadMessages(filteredThreads);
+    const sortedThreads = [...filteredThreads].sort((a, b) => {
+      const aTime = getThreadSortTimeMs(a);
+      const bTime = getThreadSortTimeMs(b);
+      return bTime - aTime;
+    });
 
-    if (profileRefStr) {
+    setThreadMessages(sortedThreads);
+
+    const unreadForAllThreads = isAdminUser && !recipientRefOverride;
+    if (recipientForQuery || unreadForAllThreads) {
       const unreadParams = new URLSearchParams();
-      unreadParams.append('recipient', profileRefStr);
-      unreadParams.append('sender:not', profileRefStr);
+      if (!unreadForAllThreads && recipientForQuery) {
+        unreadParams.append('recipient', recipientForQuery);
+        unreadParams.append('sender:not', recipientForQuery);
+      } else if (profileRefStr) {
+        // Admin global view: treat messages from others as unread candidates across all threads.
+        unreadParams.append('sender:not', profileRefStr);
+      }
       unreadParams.append('status:not', 'completed');
       unreadParams.append('part-of:missing', 'false');
       unreadParams.append('_count', '500');
@@ -212,12 +211,19 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
         }
       }
       // Always include threads user explicitly marked as unread (e.g. provider sent all, no messages to "unread")
-      for (const id of userMarkedUnreadRef.current) {
-        ids.add(id);
+      if (!readOnlyMode) {
+        for (const id of userMarkedUnreadRef.current) {
+          ids.add(id);
+        }
+      }
+      // In delegated read-only provider view, mirror provider inbox behavior:
+      // opening a thread should remove unread styling for that open thread.
+      if (readOnlyMode && recipientRefOverride && threadId) {
+        ids.delete(threadId);
       }
       setUnreadThreadIds(ids);
     }
-  }, [medplum, query]);
+  }, [medplum, query, recipientRefOverride, readOnlyMode, threadId]);
 
   useEffect(() => {
     setLoading(true);
@@ -232,17 +238,23 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
 
   // When user OPENS a thread (navigates to it), remove from userMarkedUnreadThreadIds so it will
   // become read when they view. Do NOT remove when leaving - thread stays unread until reopened.
-  const prevThreadIdRef = useRef<string | undefined>(threadId);
+  const prevThreadIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    const shouldHandleOpenAsRead = !readOnlyMode || !!recipientRefOverride;
+    if (!shouldHandleOpenAsRead) {
+      return;
+    }
     const prevId = prevThreadIdRef.current;
     prevThreadIdRef.current = threadId;
     if (threadId && prevId !== threadId) {
       // User is opening this thread - remove so it will become read when they view
-      setUserMarkedUnreadThreadIds((prev) => {
-        const next = new Set(prev);
-        next.delete(threadId);
-        return next;
-      });
+      if (!readOnlyMode) {
+        setUserMarkedUnreadThreadIds((prev) => {
+          const next = new Set(prev);
+          next.delete(threadId);
+          return next;
+        });
+      }
       // Optimistic: immediately show as read in list (don't wait for API)
       setUnreadThreadIds((prev) => {
         const next = new Set(prev);
@@ -250,7 +262,7 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
         return next;
       });
     }
-  }, [threadId]);
+  }, [threadId, readOnlyMode, recipientRefOverride]);
 
   useEffect(() => {
     const fetchThread = async (): Promise<void> => {
@@ -388,13 +400,35 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
   };
 }
 
-function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {
-  if (!refStr || !otherRefStr) {
+function getThreadSortTimeMs([parent, lastMessage]: [Communication, Communication | undefined]): number {
+  const candidates = [
+    lastMessage?.sent,
+    lastMessage?.meta?.lastUpdated,
+    parent.meta?.lastUpdated,
+    parent.sent,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    const ms = new Date(candidate).getTime();
+    if (!Number.isNaN(ms)) {
+      return ms;
+    }
+  }
+  return 0;
+}
+
+function isAdminProfile(
+  profile: { email?: string; username?: string; telecom?: { system?: string; value?: string }[] } | undefined
+): boolean {
+  if (!profile) {
     return false;
   }
-  const normalize = (s: string): string => {
-    const parts = s.split('/').filter(Boolean);
-    return parts.length >= 2 ? parts.slice(-2).join('/') : s;
-  };
-  return normalize(refStr) === normalize(otherRefStr);
+  const directEmail = profile.email ?? profile.username;
+  if (directEmail?.toLowerCase() === 'admin@example.com') {
+    return true;
+  }
+  const practitionerEmail = profile.telecom?.find((t) => t.system === 'email')?.value;
+  return practitionerEmail?.toLowerCase() === 'admin@example.com';
 }

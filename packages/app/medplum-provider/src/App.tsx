@@ -7,6 +7,7 @@ import {
   IconBook2,
   IconCalendarEvent,
   IconClipboardCheck,
+  IconLayoutDashboard,
   IconMail,
   IconSettingsAutomation,
   IconUserPlus,
@@ -68,6 +69,7 @@ export function App(): JSX.Element | null {
 
   const membership = medplum.getProjectMembership();
   const hasDoseSpot = hasDoseSpotIdentifier(membership);
+  const isAdminUser = isAdminProfile(profile);
 
   return (
     <AppShell
@@ -100,6 +102,9 @@ export function App(): JSX.Element | null {
                     label: 'Messages',
                     href: `/Communication?status=in-progress`,
                   },
+                  ...(isAdminUser
+                    ? [{ icon: <IconLayoutDashboard />, label: 'Dashboard', href: '/Communication?view=dashboard' }]
+                    : []),
                   {
                     icon: (
                       <NotificationIcon
@@ -219,4 +224,18 @@ export function App(): JSX.Element | null {
       </Suspense>
     </AppShell>
   );
+}
+
+function isAdminProfile(
+  profile: { email?: string; username?: string; telecom?: { system?: string; value?: string }[] } | undefined
+): boolean {
+  if (!profile) {
+    return false;
+  }
+  const directEmail = profile.email ?? profile.username;
+  if (directEmail?.toLowerCase() === 'admin@example.com') {
+    return true;
+  }
+  const practitionerEmail = profile.telecom?.find((t) => t.system === 'email')?.value;
+  return practitionerEmail?.toLowerCase() === 'admin@example.com';
 }

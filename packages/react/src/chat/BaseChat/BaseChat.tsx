@@ -204,6 +204,8 @@ export interface BaseChatProps extends PaperProps {
   readonly onMessagesMarkedAsRead?: () => void;
   /** Thread subject (e.g. Patient) - when sender matches this, message gets patient (red) bubble styling */
   readonly subjectRef?: Reference;
+  /** When true, hide compose area entirely (read-only thread view). */
+  readonly hideInput?: boolean;
 }
 
 /**
@@ -234,6 +236,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     disableWebSocket = false,
     onMessagesMarkedAsRead,
     subjectRef,
+    hideInput = false,
     ...paperProps
   } = props;
   const medplum = useMedplum();
@@ -513,9 +516,12 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     () =>
       communications.filter(
         (c) =>
-          !c.identifier?.some(
-            (id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you'
-          )
+          !c.identifier?.some((id) => {
+            if (id.system !== 'https://medplum.com/thread-event') {
+              return false;
+            }
+            return id.value === 'reassigned-to-you' || id.value === 'ownership-change';
+          })
       ),
     [communications]
   );
@@ -640,7 +646,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
             })}
           </ScrollArea>
         )}
-        <div className={classes.chatInputContainer}>
+        {!hideInput && <div className={classes.chatInputContainer}>
           <Form onSubmit={sendMessageInternal}>
           <button
             ref={hiddenSubmitRef}
@@ -758,7 +764,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
             )}
           </AttachmentButton>
         </Form>
-        </div>
+        </div>}
       </div>
     </Paper>
   );

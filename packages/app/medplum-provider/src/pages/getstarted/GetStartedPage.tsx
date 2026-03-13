@@ -157,6 +157,7 @@ export function GetStartedPage(): JSX.Element {
         showErrorNotification(new Error('You must be signed in'));
         return;
       }
+      const profileDisplay = profile ? getDisplayString(profile) : 'Current user';
 
       const threadBundle = await medplum.search(
         'Communication',
@@ -188,10 +189,14 @@ export function GetStartedPage(): JSX.Element {
       )[0];
       const assignerDisplay = adminPractitioner ? getDisplayString(adminPractitioner) : 'Medplum Admin';
       const adminRefStr = adminPractitioner?.id ? getReferenceString(createReference(adminPractitioner)) : undefined;
+      const reassignmentSenderRef = adminRefStr || 'Practitioner/medplum-admin-simulated';
+      const priorOwner =
+        thread.recipient?.[0]?.display || thread.recipient?.[0]?.reference?.split('/').pop() || 'Unassigned';
+      const nowIso = new Date().toISOString();
 
       await medplum.updateResource({
         ...thread,
-        recipient: [{ reference: profileRefStr, display: getDisplayString(profile) }],
+        recipient: [{ reference: profileRefStr, display: profileDisplay }],
         status: 'in-progress',
         identifier: [
           ...(thread.identifier ?? []).filter(
@@ -210,19 +215,38 @@ export function GetStartedPage(): JSX.Element {
       await medplum.createResource<Communication>({
         resourceType: 'Communication',
         status: 'in-progress',
-        sender: adminRefStr ? { reference: adminRefStr, display: assignerDisplay } : undefined,
-        recipient: [{ reference: profileRefStr, display: getDisplayString(profile) }],
+        sender: { reference: reassignmentSenderRef, display: assignerDisplay },
+        recipient: [{ reference: profileRefStr, display: profileDisplay }],
         partOf: [{ reference: `Communication/${thread.id}` }],
         identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
         payload: [{ contentString: `${assignerDisplay} reassigned ${patientName}'s thread to you.` }],
-        sent: new Date().toISOString(),
+        sent: nowIso,
+      });
+      await medplum.createResource<Communication>({
+        resourceType: 'Communication',
+        status: 'completed',
+        sender: { reference: reassignmentSenderRef, display: assignerDisplay },
+        partOf: [{ reference: `Communication/${thread.id}` }],
+        identifier: [{ system: 'https://medplum.com/thread-event', value: 'ownership-change' }],
+        payload: [
+          {
+            contentString: JSON.stringify({
+              priorOwner,
+              newOwner: profileDisplay,
+              actor: assignerDisplay,
+              timestamp: nowIso,
+            }),
+          },
+        ],
+        sent: nowIso,
       });
 
       showNotification({
         color: 'green',
-        message: `Simulated reassignment from ${assignerDisplay} to ${getDisplayString(profile)}.`,
+        message: `Simulated reassignment from ${assignerDisplay} to ${profileDisplay}.`,
       });
-      navigate(`/Communication/${thread.id}?status=in-progress`);
+      // Go to inbox list without selecting the thread so reassignment styling is visible before opening.
+      navigate('/Communication?status=in-progress');
     } catch (error) {
       showErrorNotification(error);
     } finally {

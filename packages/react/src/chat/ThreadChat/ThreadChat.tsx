@@ -31,6 +31,8 @@ export interface ThreadChatProps {
   readonly disableAutoMarkAsRead?: boolean;
   /** Called after marking messages as read on load (so parent can refresh unread list) */
   readonly onMessagesMarkedAsRead?: () => void;
+  /** When true, hide compose area entirely (read-only mode). */
+  readonly hideInput?: boolean;
 }
 
 export function ThreadChat(props: ThreadChatProps): JSX.Element | null {
@@ -49,6 +51,7 @@ export function ThreadChat(props: ThreadChatProps): JSX.Element | null {
     injectedMessages = [],
     disableAutoMarkAsRead = false,
     onMessagesMarkedAsRead,
+    hideInput = false,
   } = props;
   const medplum = useMedplum();
   const profile = useMedplumProfile();
@@ -99,13 +102,11 @@ export function ThreadChat(props: ThreadChatProps): JSX.Element | null {
     [medplum, profileRef, thread, threadRef, onMessageSent]
   );
 
-  // Currently we only support `delivered` on chats with 2 participants
-  // Normally we would use `useCallback` to memoize a function
-  // But in this case we only want to conditionally pass a function if the thread has 2 participants...
-  // If the thread has 3 or more participants, we do not pass this function; instead we pass undefined
+  // Mark unread incoming messages as read whenever auto-marking is enabled.
+  // Parent-level participant lists are not reliable for determining read eligibility in provider inbox threads.
   const onMessageReceived = useMemo(
     () =>
-      !disableAutoMarkAsRead && thread.recipient?.length === 2
+      !disableAutoMarkAsRead
         ? (message: Communication): void => {
             if (!(message.received && message.status === 'completed')) {
               medplum
@@ -120,7 +121,7 @@ export function ThreadChat(props: ThreadChatProps): JSX.Element | null {
             }
           }
         : undefined,
-    [medplum, thread.recipient?.length, disableAutoMarkAsRead]
+    [medplum, disableAutoMarkAsRead]
   );
 
   const mergedCommunications = useMemo(() => {
@@ -175,6 +176,7 @@ export function ThreadChat(props: ThreadChatProps): JSX.Element | null {
       disableWebSocket={true}
       onMessagesMarkedAsRead={onMessagesMarkedAsRead}
       subjectRef={thread.subject}
+      hideInput={hideInput}
     />
   );
 }
