@@ -24,7 +24,8 @@
     "migrate": "tsx src/migrations/migrate-main.ts",
     "start": "node --import ./dist/otel/instrumentation.js dist/index.js",
     "test": "jest",
-    "test:seed": "jest seed.test.ts --testTimeout=400000"
+    "test:seed": "jest seed.test.ts --testTimeout=400000",
+    "enable-websocket": "tsx src/scripts/enable-websocket-subscriptions.ts"
   },
   "dependencies": {
     "@appsignal/opentelemetry-instrumentation-bullmq": "0.7.3",

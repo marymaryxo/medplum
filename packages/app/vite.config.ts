@@ -27,6 +27,17 @@ export default defineConfig({
   server: {
     port: 3000,
     open: true, // open app in browser when you run npm run dev
+    proxy: {
+      '/fhir': 'http://localhost:8103',
+      '/oauth2': 'http://localhost:8103',
+      '/auth': 'http://localhost:8103',
+      '/.well-known': 'http://localhost:8103',
+      '/storage': 'http://localhost:8103',
+      '/admin': 'http://localhost:8103',
+      '/email': 'http://localhost:8103',
+      '/webhook': 'http://localhost:8103',
+      '/ws': { target: 'ws://localhost:8103', ws: true },
+    },
   },
   preview: {
     port: 3000,

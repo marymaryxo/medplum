@@ -80,8 +80,8 @@ describe('ThreadInbox', () => {
   test('renders filter buttons and new message button', async () => {
     await setup();
     // Status filter buttons
-    expect(screen.getByText('In progress')).toBeInTheDocument();
-    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('Inbox')).toBeInTheDocument();
+    expect(screen.getByText('Done')).toBeInTheDocument();
     // Participant filter and new message buttons
     const iconButtons = screen.getAllByRole('button', { name: '' });
     expect(iconButtons.length).toBeGreaterThanOrEqual(2);
@@ -89,8 +89,8 @@ describe('ThreadInbox', () => {
 
   test('renders status filter buttons', async () => {
     await setup();
-    expect(screen.getByText('In progress')).toBeInTheDocument();
-    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.getByText('Inbox')).toBeInTheDocument();
+    expect(screen.getByText('Done')).toBeInTheDocument();
   });
 
   test('shows loading skeletons when loading', async () => {
@@ -383,13 +383,13 @@ describe('ThreadInbox', () => {
 
     await waitFor(
       () => {
-        expect(screen.getByText('In Progress')).toBeInTheDocument();
+        expect(screen.getByText('Inbox')).toBeInTheDocument();
       },
       { timeout: 3000 }
     );
 
     // Click the status button to open dropdown
-    const statusButton = screen.getByText('In Progress');
+    const statusButton = screen.getByText('Inbox');
     await user.click(statusButton);
 
     await waitFor(() => {
@@ -416,13 +416,13 @@ describe('ThreadInbox', () => {
 
     await waitFor(
       () => {
-        expect(screen.getByText('In Progress')).toBeInTheDocument();
+        expect(screen.getByText('Inbox')).toBeInTheDocument();
       },
       { timeout: 3000 }
     );
 
     // Click the status button to open dropdown
-    const statusButton = screen.getByText('In Progress');
+    const statusButton = screen.getByText('Inbox');
     await user.click(statusButton);
 
     await waitFor(() => {
@@ -430,7 +430,7 @@ describe('ThreadInbox', () => {
     });
 
     // Click Completed in the dropdown - look for menu item by text
-    const completedMenuItem = screen.queryByText('Completed', { selector: '[role="menuitem"]' });
+    const completedMenuItem = screen.queryByText('Mark as done', { selector: '[role="menuitem"]' });
     if (completedMenuItem) {
       await user.click(completedMenuItem);
       await waitFor(() => {
@@ -461,7 +461,7 @@ describe('ThreadInbox', () => {
       () => {
         // The status is shown on the thread header button
         const buttons = screen.getAllByRole('button');
-        const completedButton = buttons.find((btn) => btn.textContent?.includes('Completed'));
+        const completedButton = buttons.find((btn) => btn.textContent?.includes('Done'));
         expect(completedButton).toBeInTheDocument();
       },
       { timeout: 3000 }
@@ -517,13 +517,13 @@ describe('ThreadInbox', () => {
 
     await waitFor(
       () => {
-        expect(screen.getByText('In Progress')).toBeInTheDocument();
+        expect(screen.getByText('Inbox')).toBeInTheDocument();
       },
       { timeout: 3000 }
     );
 
     // Click the status button to open dropdown
-    const statusButton = screen.getByText('In Progress');
+    const statusButton = screen.getByText('Inbox');
     await user.click(statusButton);
 
     await waitFor(() => {
@@ -531,7 +531,7 @@ describe('ThreadInbox', () => {
     });
 
     // Click Completed in the dropdown - look for menu item by text
-    const completedMenuItem = screen.queryByText('Completed', { selector: '[role="menuitem"]' });
+    const completedMenuItem = screen.queryByText('Mark as done', { selector: '[role="menuitem"]' });
     if (completedMenuItem) {
       await user.click(completedMenuItem);
       await waitFor(() => {

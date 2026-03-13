@@ -743,4 +743,30 @@ describe('BaseChat', () => {
     expect(screen.getByText('Second message with no sent date')).toBeInTheDocument();
     expect(screen.getByText('Third message with no sent date')).toBeInTheDocument();
   });
+
+  test('BaseChat renders URLs as clickable links', async () => {
+    const medplum = new MockClient({ profile: DrAliceSmith });
+    medplum.setSubscriptionManager(defaultSubManager);
+
+    await createCommunication(medplum, {
+      sender: drAliceReference,
+      recipient: [homerReference],
+      payload: [{ contentString: 'Check https://www.google.com and www.example.com' }],
+    });
+
+    await setup(
+      {
+        title: 'Test Chat',
+        query: HOMER_DR_ALICE_CHAT_QUERY,
+        sendMessage: () => undefined,
+      },
+      medplum
+    );
+
+    const links = await screen.findAllByRole('link');
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    const hrefs = links.map((a) => a.getAttribute('href'));
+    expect(hrefs).toContain('https://www.google.com');
+    expect(hrefs.some((h) => h?.endsWith('www.example.com') || h === 'https://www.example.com')).toBe(true);
+  });
 });

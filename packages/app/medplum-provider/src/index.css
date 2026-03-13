@@ -54,3 +54,10 @@
 .rbc-time-slot {
   transition: background-color 0.15s ease;
 }
+
+/* Patient chat bubbles only: target actual bubble element */
+div[data-chat-sender='patient'] {
+  background-color: #fecaca !important;
+  background: #fecaca !important;
+}
+

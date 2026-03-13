@@ -59,7 +59,7 @@ export const Basic = (): JSX.Element => {
   );
 };
 
-export const DeliveredTimestamps = (): JSX.Element => {
+export const ReadTimestamps = (): JSX.Element => {
   const sent1 = new Date();
   const received1 = new Date(sent1);
   received1.setMilliseconds(sent1.getMilliseconds() + 100);

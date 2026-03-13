@@ -17,16 +17,35 @@
 .chatBody {
   background-color: var(--mantine-color-body);
   flex: 1;
+  min-height: 0;
   position: relative;
+  overflow: hidden;
 }
 
 .chatScrollArea {
   padding: var(--mantine-spacing-xs);
+  padding-bottom: 80px;
+  height: 100%;
 }
 
 .chatInputContainer {
   background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
   padding: 6px 8px;
+  min-height: 72px;
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+}
+
+.attachmentPreview {
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-sm);
+  margin-bottom: var(--mantine-spacing-xs);
+  min-height: 52px;
 }
 
 .chatBubbleOuterWrap {
@@ -45,7 +64,6 @@
 }
 
 .chatBubble {
-  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-blue-7));
   border-radius: var(--mantine-radius-lg);
   padding: var(--mantine-spacing-sm);
   min-width: 40px;
@@ -62,6 +80,69 @@
   }
 }
 
+/* Provider / right-aligned bubbles */
+.chatBubble:not(.chatBubblePatient) {
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-blue-7));
+}
+
+/* Patient / left-aligned message bubbles - red tint (more visible) */
+.chatBubble.chatBubblePatient,
+.chatBubblePatient {
+  background-color: #fecaca !important;
+  background: #fecaca !important;
+}
+
+.chatBubbleContent a {
+  color: var(--mantine-color-blue-6);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.chatBubbleContent a:hover {
+  text-decoration: underline;
+}
+
 .chatBubbleNameRight {
   text-align: right;
+}
+
+.attachmentChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.richTextRoot {
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-sm);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.richTextToolbar {
+  border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  padding: 4px;
+  min-height: unset;
+}
+
+.richTextContent {
+  min-height: 36px;
+  max-height: 160px;
+  overflow-y: auto;
+
+  & .tiptap {
+    min-height: 36px;
+    padding: 4px 8px;
+  }
+
+  & .tiptap p {
+    margin: 0;
+  }
+
+  & .tiptap p.is-editor-empty:first-child::before {
+    color: var(--mantine-color-placeholder);
+    content: 'Type a message...';
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
 }

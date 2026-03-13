@@ -9,15 +9,17 @@ import {
   Grid,
   Group,
   List,
+  Modal,
   Paper,
   Stack,
   Text,
+  TextInput,
   Title,
 } from '@mantine/core';
-import { convertToTransactionBundle } from '@medplum/core';
-import type { Bundle, BundleEntry } from '@medplum/fhirtypes';
+import { convertToTransactionBundle, createReference, getDisplayString } from '@medplum/core';
+import type { Bundle, BundleEntry, Patient, Reference } from '@medplum/fhirtypes';
 import { showNotification } from '@mantine/notifications';
-import { MedplumLink, useMedplum } from '@medplum/react';
+import { MedplumLink, useMedplum, useMedplumProfile } from '@medplum/react';
 import {
   IconApps,
   IconArrowUpRight,
@@ -31,18 +33,33 @@ import {
   IconHelpCircle,
   IconMail,
   IconUser,
+  IconMessageCircle,
 } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { Fragment, useCallback, useState } from 'react';
+import { useNavigate } from 'react-router';
 import type { JSX } from 'react';
+import {
+  buildConversationTopicBundle,
+  buildConversationMessagesBundle,
+} from '../../data/fake-patient-conversation';
 import patientBundleData from '../../data/patient-david-james-williams.json';
 import visitBundleData from '../../data/simple-initial-visit-bundle.json';
 import { showErrorNotification } from '../../utils/notifications';
 import classes from './GetStartedPage.module.css';
 
+function extractTopicId(entry: { response?: { location?: string }; resource?: { id?: string } } | undefined): string | undefined {
+  const loc = entry?.response?.location;
+  if (loc) return loc.split('/').pop();
+  return entry?.resource?.id;
+}
+
 export function GetStartedPage(): JSX.Element {
   const medplum = useMedplum();
+  const profile = useMedplumProfile();
+  const navigate = useNavigate();
   const [importingPatient, setImportingPatient] = useState(false);
   const [importingVisit, setImportingVisit] = useState(false);
+  const [importingConversation, setImportingConversation] = useState(false);
 
   const handleImportPatient = useCallback(async () => {
     setImportingPatient(true);
@@ -87,6 +104,49 @@ export function GetStartedPage(): JSX.Element {
     }
   }, [medplum]);
 
+  const handleImportConversation = useCallback(async () => {
+    setImportingConversation(true);
+    try {
+      const profileRef = profile ? createReference(profile) : undefined;
+      if (!profileRef) {
+        showErrorNotification(new Error('You must be signed in'));
+        return;
+      }
+
+      const patients = await medplum.searchResources('Patient', { _count: '1', _sort: '-_lastUpdated' });
+      const firstPatient = patients[0];
+      if (!firstPatient?.id) {
+        showErrorNotification(new Error('No patients found. Please import the sample patient first.'));
+        return;
+      }
+
+      const patientRef = createReference(firstPatient);
+
+      const topicBundle = buildConversationTopicBundle(profileRef, patientRef);
+      const step1Result = await medplum.executeBatch(topicBundle);
+      const topicId = extractTopicId(step1Result.entry?.[0]);
+
+      if (!topicId) {
+        showErrorNotification(new Error('Failed to create thread'));
+        return;
+      }
+
+      const messagesBundle = buildConversationMessagesBundle(profileRef, topicId, patientRef);
+      await medplum.executeBatch(messagesBundle);
+
+      showNotification({
+        color: 'green',
+        message: `Created conversation for ${getDisplayString(firstPatient)}`,
+      });
+
+      navigate(`/Communication/${topicId}?status=in-progress`);
+    } catch (error) {
+      showErrorNotification(error);
+    } finally {
+      setImportingConversation(false);
+    }
+  }, [medplum, profile, navigate]);
+
   const integrations = [
     { src: '/img/integrations/labcorp.png', alt: 'Labcorp', left: 20, top: 20, zIndex: 1, rotation: -2 },
     { src: '/img/integrations/quest.png', alt: 'Quest Diagnostics', left: 70, top: 0, zIndex: 2, rotation: 2 },
@@ -97,8 +157,9 @@ export function GetStartedPage(): JSX.Element {
   ];
 
   return (
-    <Box className={classes.page} py="6rem">
-      <Container size="md" className={classes.container}>
+    <>
+      <Box className={classes.page} py="6rem">
+        <Container size="md" className={classes.container}>
         {/* Header */}
         <Box mb="6rem">
           <Title order={2} fw={800}>
@@ -207,6 +268,38 @@ export function GetStartedPage(): JSX.Element {
                   mt="sm"
                 >
                   {importingVisit ? 'Importing...' : 'Import Care Template'}
+                </Button>
+              </Paper>
+              <Paper radius="md" withBorder p="lg" shadow="sm" className={classes.card}>
+                <Stack gap="md" className={classes.flexOne}>
+                  <Group gap="sm" align="center">
+                    <IconMessageCircle size={24} color="var(--icon-secondary)" />
+                    <Stack gap={0}>
+                      <Text size="11px" fw={500} className={classes.textLabel}>
+                        Fake Patient Conversation
+                      </Text>
+                      <Text fw={600} size="lg">
+                        Import Patient Convo
+                      </Text>
+                    </Stack>
+                  </Group>
+                  <Divider />
+                  <Text size="md" className={classes.textSecondary} mb="sm" style={{ flex: 1 }}>
+                    Sample message thread between patient David Williams and provider — fatigue follow-up, lab orders, and lifestyle advice.
+                  </Text>
+                </Stack>
+                <Button
+                  type="button"
+                  variant="filled"
+                  size="sm"
+                  fullWidth
+                  onClick={handleImportConversation}
+                  loading={importingConversation}
+                  disabled={importingConversation}
+                  leftSection={<IconDownload size={14} />}
+                  mt="sm"
+                >
+                  {importingConversation ? 'Creating...' : 'Import Patient Convo'}
                 </Button>
               </Paper>
               <Paper radius="md" withBorder p="lg" shadow="sm" className={classes.card}>
@@ -623,5 +716,6 @@ export function GetStartedPage(): JSX.Element {
         </Stack>
       </Container>
     </Box>
+  </>
   );
 }

@@ -10,23 +10,26 @@ interface ChatListProps {
   threads: [Communication, Communication | undefined][];
   selectedCommunication: Communication | undefined;
   getThreadUri: (topic: Communication) => string;
+  unreadThreadIds?: Set<string>;
 }
 
 export const ChatList = (props: ChatListProps): JSX.Element => {
-  const { threads, selectedCommunication, getThreadUri } = props;
+  const { threads, selectedCommunication, getThreadUri, unreadThreadIds = new Set() } = props;
 
   return (
     <Stack gap={0}>
       {threads.map((thread: [Communication, Communication | undefined]) => {
         const topicCommunication = thread[0];
         const lastCommunication = thread[1];
-        const _isSelected = selectedCommunication?.id === topicCommunication.id;
+        const isSelected = selectedCommunication?.id === topicCommunication.id;
+        const isUnread = topicCommunication.id ? unreadThreadIds.has(topicCommunication.id) : false;
         return (
           <Fragment key={topicCommunication.id}>
             <ChatListItem
               topic={topicCommunication}
               lastCommunication={lastCommunication}
-              isSelected={_isSelected}
+              isSelected={isSelected}
+              isUnread={isUnread}
               getThreadUri={getThreadUri}
             />
             <Divider />

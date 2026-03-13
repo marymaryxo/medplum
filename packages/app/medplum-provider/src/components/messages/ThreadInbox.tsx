@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  Alert,
   Flex,
   Paper,
   ScrollArea,
@@ -18,20 +19,30 @@ import {
   Pagination,
   Group,
 } from '@mantine/core';
-import type { Communication, Patient, Practitioner, Reference } from '@medplum/fhirtypes';
-import { PatientSummary, ThreadChat } from '@medplum/react';
-import { useCallback, useEffect, useMemo } from 'react';
+import type { Attachment, Communication, Patient, Practitioner, Reference } from '@medplum/fhirtypes';
+import { PatientSummary, ThreadChat, useMedplum, useResource } from '@medplum/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { IconMessageCircle, IconChevronDown, IconPlus } from '@tabler/icons-react';
-import { getReferenceString, Operator, parseSearchRequest } from '@medplum/core';
+import {
+  IconMessageCircle,
+  IconChevronDown,
+  IconFolder,
+  IconPaperclip,
+  IconPlus,
+} from '@tabler/icons-react';
+import { getDisplayString, getReferenceString, parseSearchRequest } from '@medplum/core';
+import { useMedplumProfile } from '@medplum/react';
 import type { SearchRequest } from '@medplum/core';
 import { ChatList } from './ChatList';
 import { NewTopicDialog } from './NewTopicDialog';
-import { ParticipantFilter } from './ParticipantFilter';
+import { ReassignThreadDialog } from './ReassignThreadDialog';
+import { SharedFilesDialog } from './SharedFilesDialog';
 import { useThreadInbox } from '../../hooks/useThreadInbox';
 import classes from './ThreadInbox.module.css';
 import { useDisclosure } from '@mantine/hooks';
 import { showErrorNotification } from '../../utils/notifications';
+import { showNotification } from '@mantine/notifications';
+import { normalizeErrorString } from '@medplum/core';
 import cx from 'clsx';
 import { Link } from 'react-router';
 
@@ -73,7 +84,13 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     completedUri,
   } = props;
 
+  const medplum = useMedplum();
+  const profile = useMedplumProfile();
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
+  const [sharedFilesOpened, { open: openSharedFiles, close: closeSharedFiles }] = useDisclosure(false);
+  const [reassignOpened, { open: openReassign, close: closeReassign }] = useDisclosure(false);
+  const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentSearch = useMemo(() => parseSearchRequest(`Communication?${query}`), [query]);
 
@@ -83,25 +100,16 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   const currentPage = Math.floor(currentOffset / itemsPerPage) + 1;
   const status = (searchParams.get('status') as Communication['status']) || 'in-progress';
 
-  // Extract participants from parsed search request filters (comma-separated)
-  const selectedParticipants = useMemo((): Reference<Patient | Practitioner>[] => {
-    const recipientFilters = currentSearch.filters?.filter((f) => f.code === 'recipient') ?? [];
-    // Split comma-separated values and flatten
-    return recipientFilters.flatMap((f) =>
-      f.value
-        .split(',')
-        .filter(Boolean)
-        .map((ref) => ({ reference: ref }) as Reference<Patient | Practitioner>)
-    );
-  }, [currentSearch]);
-
   const {
     loading,
     error,
     threadMessages,
     selectedThread,
     total,
+    unreadThreadIds,
+    userMarkedUnreadThreadIds,
     handleThreadStatusChange,
+    handleMarkThreadAsUnread,
     addThreadMessage,
     refreshThreadMessages,
   } = useThreadInbox({
@@ -109,32 +117,42 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     threadId,
   });
 
-  const handleParticipantsChange = useCallback(
-    (participants: Reference<Patient | Practitioner>[]) => {
-      // Remove existing recipient filters
-      const otherFilters = currentSearch.filters?.filter((f) => f.code !== 'recipient') ?? [];
-
-      // Add recipient filter with comma-separated values (OR logic in FHIR)
-      const participantRefs = participants.map((p) => p.reference).filter(Boolean) as string[];
-      const newFilters =
-        participantRefs.length > 0
-          ? [...otherFilters, { code: 'recipient', operator: Operator.EQUALS, value: participantRefs.join(',') }]
-          : otherFilters;
-
-      onChange({
-        ...currentSearch,
-        filters: newFilters,
-        offset: 0, // Reset to first page when filter changes
-      });
-    },
-    [currentSearch, onChange]
-  );
-
   useEffect(() => {
     if (error) {
       showErrorNotification(error);
     }
   }, [error]);
+
+  useEffect(() => {
+    setPendingAttachments([]);
+  }, [selectedThread?.id]);
+
+  const handleFileSelect = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files?.length) return;
+      try {
+        const newAttachments: Attachment[] = [];
+        for (let i = 0; i < files.length; i++) {
+          const att = await medplum.createAttachment({
+            data: files[i],
+            contentType: files[i].type || 'application/octet-stream',
+            filename: files[i].name,
+          });
+          newAttachments.push(att);
+        }
+        setPendingAttachments((prev) => [...prev, ...newAttachments]);
+      } catch (err) {
+        showNotification({
+          color: 'red',
+          title: 'Upload failed',
+          message: normalizeErrorString(err as Error),
+        });
+      }
+      e.target.value = '';
+    },
+    [medplum]
+  );
 
   const handleTopicStatusChangeWithErrorHandling = async (newStatus: Communication['status']): Promise<void> => {
     try {
@@ -149,6 +167,36 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     addThreadMessage(message);
     onNew(message);
   };
+
+  const profileRefStr = profile ? getReferenceString(profile) : undefined;
+  const isReassignedAway =
+    !!selectedThread &&
+    !!profileRefStr &&
+    !selectedThread.recipient?.some((r) => r.reference === profileRefStr);
+
+  const newPractitionerRef = isReassignedAway ? selectedThread?.recipient?.[0] : undefined;
+  const newPractitioner = useResource(newPractitionerRef);
+  const reassignedToName = newPractitioner
+    ? getDisplayString(newPractitioner)
+    : newPractitionerRef?.display || 'another provider';
+
+  const handleReassign = useCallback(
+    async (providerRef: Reference<Practitioner>, displayName: string): Promise<void> => {
+      if (!selectedThread) return;
+      await medplum.updateResource({
+        ...selectedThread,
+        recipient: [{ ...providerRef, display: displayName }],
+        status: 'completed',
+      });
+      showNotification({
+        color: 'green',
+        message: `Thread reassigned to ${displayName} and marked as done for you. You can no longer reply.`,
+      });
+      await refreshThreadMessages();
+      closeReassign();
+    },
+    [selectedThread, medplum, refreshThreadMessages, closeReassign]
+  );
 
   const skeletonTitleWidths = [80, 72, 68, 64];
   const skeletonSubtitleWidths = [85, 78, 70, 60];
@@ -170,7 +218,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       h={32}
                       radius="xl"
                     >
-                      In progress
+                      Inbox
                     </Button>
                     <Button
                       component={Link}
@@ -179,12 +227,8 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       h={32}
                       radius="xl"
                     >
-                      Completed
+                      Done
                     </Button>
-                    <ParticipantFilter
-                      selectedParticipants={selectedParticipants}
-                      onFilterChange={handleParticipantsChange}
-                    />
                   </Group>
                   <ActionIcon radius="50%" variant="filled" color="blue" onClick={openModal}>
                     <IconPlus size={16} />
@@ -215,6 +259,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       threads={threadMessages}
                       selectedCommunication={selectedThread}
                       getThreadUri={getThreadUri}
+                      unreadThreadIds={unreadThreadIds}
                     />
                   )
                 )}
@@ -254,42 +299,100 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                         {selectedThread.topic?.text ?? 'Messages'}
                       </Text>
 
-                      <Menu position="bottom-end" shadow="md">
+                      <Group gap="xs">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          multiple
+                          accept="*/*"
+                          style={{ display: 'none' }}
+                          onChange={handleFileSelect}
+                        />
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size="lg"
+                          aria-label="Add attachment"
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          <IconPaperclip size={20} stroke={1.5} />
+                        </ActionIcon>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size="lg"
+                          aria-label="View all shared files"
+                          onClick={openSharedFiles}
+                        >
+                          <IconFolder size={20} stroke={1.5} />
+                        </ActionIcon>
+                        <Menu position="bottom-end" shadow="md">
                         <Menu.Target>
                           <Button
                             variant="light"
                             color={getStatusColor(selectedThread.status)}
-                            rightSection={
-                              selectedThread.status === 'completed' ? undefined : <IconChevronDown size={16} />
-                            }
+                            rightSection={<IconChevronDown size={16} />}
                             radius="xl"
                             size="sm"
                           >
-                            {selectedThread.status
-                              .split('-')
-                              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                              .join(' ')}
+                            {getStatusLabel(selectedThread.status)}
                           </Button>
                         </Menu.Target>
 
-                        {selectedThread.status !== 'completed' && (
-                          <>
-                            <Menu.Dropdown>
-                              <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}>
-                                Completed
+                        <Menu.Dropdown>
+                          <Menu.Item
+                            onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}
+                            disabled={selectedThread.status === 'in-progress'}
+                          >
+                            Move to inbox
+                          </Menu.Item>
+                          <Menu.Item
+                            onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}
+                            disabled={selectedThread.status === 'completed'}
+                          >
+                            Mark as done
+                          </Menu.Item>
+                          {!isReassignedAway && (
+                            <>
+                              <Menu.Divider />
+                              <Menu.Item onClick={openReassign}>
+                                Reassign to provider
                               </Menu.Item>
-                            </Menu.Dropdown>
-                          </>
-                        )}
-                      </Menu>
+                            </>
+                          )}
+                          <Menu.Item onClick={() => handleMarkThreadAsUnread()}>Mark as unread</Menu.Item>
+                        </Menu.Dropdown>
+                        </Menu>
+                      </Group>
                     </Flex>
                     <Divider />
+                    {isReassignedAway && (
+                      <Alert
+                        color="blue"
+                        variant="light"
+                        m="md"
+                        mb={0}
+                        style={{ flexShrink: 0 }}
+                        styles={{ body: { overflow: 'visible', minHeight: 'auto' } }}
+                      >
+                        Thread reassigned to {reassignedToName} and marked as done for you. You can no longer reply.
+                      </Alert>
+                    )}
                     <Flex direction="column" style={{ flex: 1 }} h="100%">
                       <ThreadChat
                         key={`${getReferenceString(selectedThread)}`}
                         title={'Messages'}
                         thread={selectedThread}
                         excludeHeader={true}
+                        inputDisabled={isReassignedAway}
+                        // @ts-expect-error ThreadChat supports attachments - see ThreadChatProps in source
+                        attachments={pendingAttachments}
+                        onAttachmentsChange={(attachments: Attachment[]) => setPendingAttachments(attachments)}
+                        disableAutoMarkAsRead={
+                          selectedThread.id ? userMarkedUnreadThreadIds.has(selectedThread.id) : false
+                        }
+                        onMessagesMarkedAsRead={refreshThreadMessages}
+                        onOpenAllFiles={openSharedFiles}
                       />
                     </Flex>
                   </Stack>
@@ -313,6 +416,13 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
         </Flex>
       </div>
       <NewTopicDialog subject={subject} opened={modalOpened} onClose={closeModal} onSubmit={handleNewTopicCompletion} />
+      <SharedFilesDialog thread={selectedThread} opened={sharedFilesOpened} onClose={closeSharedFiles} />
+      <ReassignThreadDialog
+        thread={selectedThread}
+        opened={reassignOpened}
+        onClose={closeReassign}
+        onReassign={handleReassign}
+      />
     </>
   );
 }
@@ -332,6 +442,14 @@ function NoMessages(): JSX.Element {
       </Stack>
     </Center>
   );
+}
+
+/** Returns user-facing label for thread status */
+function getStatusLabel(status: Communication['status']): string {
+  if (status === 'in-progress') return 'Inbox';
+  if (status === 'completed') return 'Done';
+  if (status === 'stopped') return 'Stopped';
+  return status?.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') ?? '';
 }
 
 function getStatusColor(status: Communication['status']): string {

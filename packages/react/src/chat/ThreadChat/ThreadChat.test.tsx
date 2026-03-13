@@ -304,7 +304,7 @@ describe('ThreadChat', () => {
     expect(updatedMessage.status).toEqual('in-progress');
   });
 
-  test('Delivered timestamps show up when other participant has received chat', async () => {
+  test('Read timestamps show up when other participant has read chat', async () => {
     const thread = await createThreadHeader(defaultMedplum);
     const threadRef = createReference(thread);
 
@@ -332,7 +332,7 @@ describe('ThreadChat', () => {
     expect(
       screen.getByText("Sorry doc, I can't hear you over the Geiger counter at the plant. Can you call back later?")
     ).toBeInTheDocument();
-    expect(screen.getByText(/Delivered \d+:\d+/)).toBeInTheDocument();
+    expect(screen.getByText(/Read \d+:\d+/)).toBeInTheDocument();
   });
 
   test('Clears messages if given a new thread', async () => {

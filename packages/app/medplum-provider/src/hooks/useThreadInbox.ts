@@ -1,9 +1,32 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Communication } from '@medplum/fhirtypes';
 import { useMedplum } from '@medplum/react';
 import { getReferenceString } from '@medplum/core';
+
+const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
+
+function loadUserMarkedUnreadFromStorage(): Set<string> {
+  try {
+    const stored = sessionStorage.getItem(USER_MARKED_UNREAD_STORAGE_KEY);
+    if (stored) {
+      const arr = JSON.parse(stored) as string[];
+      return new Set(Array.isArray(arr) ? arr : []);
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return new Set();
+}
+
+function saveUserMarkedUnreadToStorage(ids: Set<string>): void {
+  try {
+    sessionStorage.setItem(USER_MARKED_UNREAD_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch {
+    // ignore storage errors
+  }
+}
 
 export interface UseThreadInboxOptions {
   query: string;
@@ -17,14 +40,20 @@ export interface UseThreadInboxReturn {
   threadMessages: [Communication, Communication | undefined][];
   selectedThread: Communication | undefined;
   total: number | undefined;
+  /** Thread IDs that have unread messages (for the current user) */
+  unreadThreadIds: Set<string>;
+  /** Thread IDs the user explicitly marked as unread - disable auto-mark-as-read when viewing */
+  userMarkedUnreadThreadIds: Set<string>;
   addThreadMessage: (message: Communication) => void;
   handleThreadStatusChange: (newStatus: Communication['status']) => Promise<void>;
+  handleMarkThreadAsRead: () => Promise<void>;
+  handleMarkThreadAsUnread: () => Promise<void>;
   refreshThreadMessages: () => Promise<void>;
 }
 
 /*
 useThreadInbox is a hook that fetches all communications and returns the thread messages and selected thread.
-All comunications returned do not have a partOf field.
+All communications returned do not have a partOf field.
 It also provides a function to update the status of the selected thread.
 
 @param query - The query to fetch all communications.
@@ -39,6 +68,15 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
   const [selectedThread, setSelectedThread] = useState<Communication | undefined>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const [total, setTotal] = useState<number | undefined>(undefined);
+  const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
+  const [userMarkedUnreadThreadIds, setUserMarkedUnreadThreadIds] = useState<Set<string>>(loadUserMarkedUnreadFromStorage);
+  const userMarkedUnreadRef = useRef<Set<string>>(loadUserMarkedUnreadFromStorage());
+  userMarkedUnreadRef.current = userMarkedUnreadThreadIds;
+
+  // Persist userMarkedUnreadThreadIds across page navigation (e.g. Messages -> Schedule -> Messages)
+  useEffect(() => {
+    saveUserMarkedUnreadToStorage(userMarkedUnreadThreadIds);
+  }, [userMarkedUnreadThreadIds]);
 
   const fetchAllCommunications = useCallback(async (): Promise<void> => {
     const searchParams = new URLSearchParams(query);
@@ -111,6 +149,31 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
       .filter((thread): thread is [Communication, Communication] => thread[1] !== undefined);
 
     setThreadMessages(threadsWithReplies);
+
+    const profile = medplum.getProfile();
+    const profileRefStr = profile ? getReferenceString(profile) : undefined;
+    if (profileRefStr) {
+      const unreadParams = new URLSearchParams();
+      unreadParams.append('recipient', profileRefStr);
+      unreadParams.append('sender:not', profileRefStr);
+      unreadParams.append('status:not', 'completed');
+      unreadParams.append('part-of:missing', 'false');
+      unreadParams.append('_count', '500');
+      const unreadBundle = await medplum.search('Communication', unreadParams.toString(), { cache: 'no-cache' });
+      const ids = new Set<string>();
+      for (const entry of unreadBundle.entry ?? []) {
+        const c = entry.resource as Communication | undefined;
+        const partOf = c?.partOf?.[0]?.reference;
+        if (partOf?.startsWith('Communication/')) {
+          ids.add(partOf.replace('Communication/', ''));
+        }
+      }
+      // Always include threads user explicitly marked as unread (e.g. provider sent all, no messages to "unread")
+      for (const id of userMarkedUnreadRef.current) {
+        ids.add(id);
+      }
+      setUnreadThreadIds(ids);
+    }
   }, [medplum, query]);
 
   useEffect(() => {
@@ -123,6 +186,28 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
         setLoading(false);
       });
   }, [fetchAllCommunications]);
+
+  // When user OPENS a thread (navigates to it), remove from userMarkedUnreadThreadIds so it will
+  // become read when they view. Do NOT remove when leaving - thread stays unread until reopened.
+  const prevThreadIdRef = useRef<string | undefined>(threadId);
+  useEffect(() => {
+    const prevId = prevThreadIdRef.current;
+    prevThreadIdRef.current = threadId;
+    if (threadId && prevId !== threadId) {
+      // User is opening this thread - remove so it will become read when they view
+      setUserMarkedUnreadThreadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(threadId);
+        return next;
+      });
+      // Optimistic: immediately show as read in list (don't wait for API)
+      setUnreadThreadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(threadId);
+        return next;
+      });
+    }
+  }, [threadId]);
 
   useEffect(() => {
     const fetchThread = async (): Promise<void> => {
@@ -181,14 +266,81 @@ export function useThreadInbox({ query, threadId }: UseThreadInboxOptions): UseT
     setThreadMessages((prev) => [[message, undefined], ...prev]);
   };
 
+  const handleMarkThreadAsRead = async (): Promise<void> => {
+    if (!selectedThread?.id) return;
+    const profile = medplum.getProfile();
+    const profileRefStr = profile ? getReferenceString(profile) : undefined;
+    if (!profileRefStr) return;
+    const searchParams = new URLSearchParams();
+    searchParams.append('part-of', `Communication/${selectedThread.id}`);
+    searchParams.append('recipient', profileRefStr);
+    searchParams.append('status:not', 'completed');
+    const bundle = await medplum.search('Communication', searchParams.toString(), { cache: 'no-cache' });
+    const unread = (bundle.entry ?? [])
+      .map((e) => e.resource as Communication)
+      .filter((c): c is Communication => !!c?.id);
+    const now = new Date().toISOString();
+    await Promise.all(
+      unread.map((c) =>
+        medplum.updateResource({
+          ...c,
+          received: c.received ?? now,
+          status: 'completed',
+        })
+      )
+    );
+    setUserMarkedUnreadThreadIds((prev) => {
+      const next = new Set(prev);
+      next.delete(selectedThread.id!);
+      return next;
+    });
+    await fetchAllCommunications();
+  };
+
+  const handleMarkThreadAsUnread = async (): Promise<void> => {
+    if (!selectedThread?.id) return;
+    const profile = medplum.getProfile();
+    const profileRefStr = profile ? getReferenceString(profile) : undefined;
+    if (!profileRefStr) return;
+    // Optimistic update: show unread styling immediately
+    const threadIdToMark = selectedThread.id!;
+    setUnreadThreadIds((prev) => new Set(prev).add(threadIdToMark));
+    setUserMarkedUnreadThreadIds((prev) => {
+      const next = new Set(prev).add(threadIdToMark);
+      userMarkedUnreadRef.current = next; // Update ref immediately so fetchAllCommunications sees it
+      return next;
+    });
+    const searchParams = new URLSearchParams();
+    searchParams.append('part-of', `Communication/${selectedThread.id}`);
+    searchParams.append('recipient', profileRefStr);
+    searchParams.append('status', 'completed');
+    const bundle = await medplum.search('Communication', searchParams.toString(), { cache: 'no-cache' });
+    const read = (bundle.entry ?? [])
+      .map((e) => e.resource as Communication)
+      .filter((c): c is Communication => !!c?.id);
+    await Promise.all(
+      read.map((c) =>
+        medplum.updateResource({
+          ...c,
+          status: 'in-progress',
+        })
+      )
+    );
+    await fetchAllCommunications();
+  };
+
   return {
     loading,
     error,
     threadMessages,
     selectedThread,
     total,
+    unreadThreadIds,
+    userMarkedUnreadThreadIds,
     addThreadMessage,
     handleThreadStatusChange,
+    handleMarkThreadAsRead,
+    handleMarkThreadAsUnread,
     refreshThreadMessages: fetchAllCommunications,
   };
 }

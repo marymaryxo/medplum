@@ -92,7 +92,7 @@ export function App(): JSX.Element | null {
                     icon: (
                       <NotificationIcon
                         resourceType="Communication"
-                        countCriteria={`recipient=${getReferenceString(profile)}&status:not=completed&_summary=count`}
+                        countCriteria={`recipient=${getReferenceString(profile)}&sender:not=${getReferenceString(profile)}&status:not=completed&part-of:missing=false&_summary=count`}
                         subscriptionCriteria={`Communication?recipient=${getReferenceString(profile)}`}
                         iconComponent={<IconMail />}
                       />
@@ -117,15 +117,18 @@ export function App(): JSX.Element | null {
               {
                 title: 'Quick Links',
                 links: [
-                  ...(!setupDismissed
-                    ? [
-                        {
-                          icon: <DismissableNavIcon icon={<IconSettingsAutomation />} onDismiss={handleDismissSetup} />,
-                          label: 'Get Started',
-                          href: '/getstarted',
-                        },
-                      ]
-                    : []),
+                  {
+                    icon: setupDismissed ? (
+                      <IconSettingsAutomation />
+                    ) : (
+                      <DismissableNavIcon
+                        icon={<IconSettingsAutomation />}
+                        onDismiss={handleDismissSetup}
+                      />
+                    ),
+                    label: 'Get Started',
+                    href: '/getstarted',
+                  },
                   { icon: <IconUserPlus />, label: 'New Patient', href: '/onboarding' },
                   { icon: <IconApps />, label: 'Integrations', href: '/integrations' },
                   ...(hasDoseSpot

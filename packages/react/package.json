@@ -145,5 +145,14 @@
   },
   "engines": {
     "node": "^22.18.0 || >=24.2.0"
+  },
+  "dependencies": {
+    "@mantine/tiptap": "^8.3.15",
+    "@tiptap/extension-placeholder": "^3.20.0",
+    "@tiptap/pm": "^3.20.0",
+    "@tiptap/react": "^3.20.0",
+    "@tiptap/starter-kit": "^3.20.0",
+    "@types/dompurify": "^3.0.5",
+    "dompurify": "^3.3.1"
   }
 }

@@ -19,6 +19,7 @@ export async function seedDatabase(config: MedplumServerConfig): Promise<void> {
 
     if (await isSeeded(systemRepo)) {
       globalLogger.info('Already seeded');
+      await ensureWebSocketSubscriptionsEnabled(systemRepo, config);
       return;
     }
 
@@ -40,7 +41,38 @@ export async function seedDatabase(config: MedplumServerConfig): Promise<void> {
       await rebuildR4SearchParameters(systemRepo);
       globalLogger.info('Finished building search parameters', { durationMs: Date.now() - startTime });
     });
+
+    await ensureWebSocketSubscriptionsEnabled(systemRepo, config);
   }, getDatabasePool(DatabaseMode.WRITER));
+}
+
+/**
+ * Ensures websocket-subscriptions is enabled on all projects.
+ * Runs on every server startup for existing databases.
+ */
+export async function ensureWebSocketSubscriptionsEnabled(
+  systemRepo: Repository,
+  config: MedplumServerConfig
+): Promise<void> {
+  const defaultFeatures = config.defaultProjectFeatures ?? [];
+  if (!defaultFeatures.includes('websocket-subscriptions')) {
+    return;
+  }
+
+  const projects = await systemRepo.searchResources<Project>({
+    resourceType: 'Project',
+    count: 1000,
+  });
+  for (const project of projects) {
+    const currentFeatures = project.features ?? [];
+    if (!currentFeatures.includes('websocket-subscriptions')) {
+      await systemRepo.updateResource<Project>({
+        ...project,
+        features: [...currentFeatures, 'websocket-subscriptions'],
+      });
+      globalLogger.info('Enabled websocket-subscriptions on project', { projectId: project.id, name: project.name });
+    }
+  }
 }
 
 async function createSuperAdmin(systemRepo: Repository, config: MedplumServerConfig): Promise<void> {
@@ -62,6 +94,7 @@ async function createSuperAdmin(systemRepo: Repository, config: MedplumServerCon
     owner: createReference(superAdmin),
     superAdmin: true,
     strictMode: true,
+    features: ['websocket-subscriptions'],
   });
 
   await systemRepo.updateResource<Project>({

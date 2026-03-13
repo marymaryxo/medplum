@@ -1,17 +1,10 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import { Button, Modal, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Modal, Stack, Text } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { createReference } from '@medplum/core';
-import type {
-  Communication,
-  Patient,
-  Practitioner,
-  Questionnaire,
-  QuestionnaireResponse,
-  Reference,
-} from '@medplum/fhirtypes';
-import { QuestionnaireForm, ResourceInput, useMedplum, useMedplumProfile } from '@medplum/react';
+import type { Communication, Patient, Reference } from '@medplum/fhirtypes';
+import { ResourceInput, useMedplum, useMedplumProfile } from '@medplum/react';
 import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { showErrorNotification } from '../../utils/notifications';
@@ -29,30 +22,9 @@ export const NewTopicDialog = (props: NewTopicDialogProps): JSX.Element => {
   const profile = useMedplumProfile();
   const profileRef = useMemo(() => (profile ? createReference(profile) : undefined), [profile]);
 
-  const [topic, setTopic] = useState('');
-  const [practitioners, setPractitioners] = useState<Reference<Practitioner>[]>(
-    profile?.resourceType === 'Practitioner' ? [createReference(profile) as Reference<Practitioner>] : []
-  );
   const [patient, setPatient] = useState<Reference<Patient> | undefined>(
     subject ? createReference(subject as Patient) : undefined
   );
-
-  // Create initial QuestionnaireResponse with current practitioner as default
-  const initialResponse: QuestionnaireResponse | undefined = useMemo(() => {
-    if (profile?.resourceType === 'Practitioner') {
-      return {
-        resourceType: 'QuestionnaireResponse',
-        status: 'in-progress',
-        item: [
-          {
-            linkId: 'q1',
-            answer: [{ valueReference: createReference(profile) as Reference<Practitioner> }],
-          },
-        ],
-      };
-    }
-    return undefined;
-  }, [profile]);
 
   const handleSubmit = async (): Promise<void> => {
     if (!patient) {
@@ -64,20 +36,15 @@ export const NewTopicDialog = (props: NewTopicDialogProps): JSX.Element => {
       return;
     }
 
+    // Include current practitioner in recipient so the thread appears in their inbox and they can participate.
+    // This allows starting a new thread with any patient, even if a previous thread with that patient was reassigned.
+    const recipient = profileRef ? [patient, profileRef] : [patient];
     const communication: Communication = {
       resourceType: 'Communication',
       status: 'in-progress',
       subject: patient,
       sender: profileRef,
-      recipient: [
-        patient,
-        ...practitioners.map((practitioner) => ({
-          reference: practitioner.reference,
-        })),
-      ],
-      topic: {
-        text: topic,
-      },
+      recipient,
     };
 
     try {
@@ -107,59 +74,8 @@ export const NewTopicDialog = (props: NewTopicDialogProps): JSX.Element => {
           />
         </Stack>
 
-        <Stack gap={0}>
-          <Text fw={500}>Practitioner (optional)</Text>
-          <Text c="dimmed">Select one or more practitioners</Text>
-
-          <QuestionnaireForm
-            questionnaire={questionnaire}
-            questionnaireResponse={initialResponse}
-            excludeButtons={true}
-            onChange={(value: QuestionnaireResponse) => {
-              const references =
-                value.item?.[0].answer
-                  ?.map((item) => item.valueReference)
-                  .filter((ref): ref is Reference<Practitioner> => ref !== undefined) ?? [];
-              setPractitioners(references);
-            }}
-          />
-        </Stack>
-
-        <Stack gap={0}>
-          <Text fw={500}>Topic (optional)</Text>
-          <Text c="dimmed">Enter a topic for the message</Text>
-
-          <TextInput placeholder="Enter your topic" value={topic} onChange={(e) => setTopic(e.target.value)} />
-        </Stack>
-
         <Button onClick={handleSubmit}>Next</Button>
       </Stack>
     </Modal>
   );
-};
-
-const questionnaire: Questionnaire = {
-  resourceType: 'Questionnaire',
-  status: 'active',
-  item: [
-    {
-      linkId: 'q1',
-      type: 'reference',
-      repeats: true,
-      extension: [
-        {
-          url: 'http://hl7.org/fhir/StructureDefinition/questionnaire-referenceResource',
-          valueCodeableConcept: {
-            coding: [
-              {
-                system: 'http://hl7.org/fhir/fhir-types',
-                display: 'Practitioner',
-                code: 'Practitioner',
-              },
-            ],
-          },
-        },
-      ],
-    },
-  ],
 };

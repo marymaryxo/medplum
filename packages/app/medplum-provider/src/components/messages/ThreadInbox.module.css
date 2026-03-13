@@ -21,3 +21,16 @@
   background-color: light-dark(var(--mantine-color-black), var(--mantine-color-gray-6));
   color: light-dark(var(--mantine-color-white), var(--mantine-color-white));
 }
+
+.attachmentPreviewPanel {
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-gray-8));
+}
+
+.attachmentChip {
+  align-items: center;
+}
+
+.chatArea {
+  min-height: 0;
+}
