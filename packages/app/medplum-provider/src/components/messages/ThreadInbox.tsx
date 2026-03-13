@@ -241,17 +241,19 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
       await medplum.updateResource({
         ...selectedThread,
         recipient: [{ ...providerRef, display: displayName }],
-        status: 'in-progress',
+        status: 'completed',
         identifier: [
           ...(selectedThread.identifier ?? []).filter(
             (id) =>
               !(
                 (id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you') ||
-                id.system === 'https://medplum.com/thread-state/assigner-display'
+                id.system === 'https://medplum.com/thread-state/assigner-display' ||
+                id.system === 'https://medplum.com/thread-state/assigner-ref'
               )
           ),
           { system: 'https://medplum.com/thread-state', value: 'reassigned-to-you' },
           { system: 'https://medplum.com/thread-state/assigner-display', value: fromProviderName },
+          ...(profileRefStr ? [{ system: 'https://medplum.com/thread-state/assigner-ref', value: profileRefStr }] : []),
         ],
       });
       await medplum.createResource<Communication>({
@@ -373,7 +375,12 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
             return undefined;
           }
         })
-        .filter((e): e is OwnershipLogEntry => !!e);
+        .filter((e): e is OwnershipLogEntry => !!e)
+        .sort((a, b) => {
+          const aMs = new Date(a.timestamp).getTime();
+          const bMs = new Date(b.timestamp).getTime();
+          return (Number.isNaN(bMs) ? 0 : bMs) - (Number.isNaN(aMs) ? 0 : aMs);
+        });
       setOwnershipLogEntries(parsed);
     };
     loadOwnershipLogs().catch(console.error);
@@ -537,15 +544,20 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                               >
                                 Mark as done
                               </Menu.Item>
-                              {!isReassignedAway && (
+                              {(!isReassignedAway || isAdminUser) && (
                                 <>
                                   <Menu.Divider />
                                   <Menu.Item onClick={openReassign}>
-                                    Reassign to provider
+                                    Reassign thread
                                   </Menu.Item>
                                 </>
                               )}
-                              <Menu.Item onClick={() => handleMarkThreadAsUnread()}>Mark as unread</Menu.Item>
+                              <Menu.Item
+                                onClick={() => handleMarkThreadAsUnread()}
+                                disabled={selectedThread.status === 'completed'}
+                              >
+                                Mark as unread
+                              </Menu.Item>
                             </Menu.Dropdown>
                           </Menu>
                         </Group>
@@ -610,7 +622,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                     )}
                     <Flex direction="column" style={{ flex: 1, minHeight: 0 }} h="100%">
                       <ThreadChat
-                        key={`${getReferenceString(selectedThread)}`}
                         title={'Messages'}
                         thread={selectedThread}
                         excludeHeader={true}
@@ -733,7 +744,6 @@ function formatLogTimestamp(timestamp: string): string {
   return date.toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
-    year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
   });
@@ -743,12 +753,12 @@ function formatOwnershipLogEntry(entry: OwnershipLogEntry): string {
   const priorOwner = formatOwnershipActor(entry.priorOwner);
   const newOwner = formatOwnershipActor(entry.newOwner);
   const actor = formatOwnershipActor(entry.actor);
-  const base = `${priorOwner} → ${newOwner}`;
   const formattedTimestamp = formatLogTimestamp(entry.timestamp);
+  const base = `${formattedTimestamp} · ${priorOwner} → ${newOwner}`;
   if (normalizeOwnerKey(entry.actor) === normalizeOwnerKey(entry.priorOwner)) {
-    return `${base} · ${formattedTimestamp}`;
+    return base;
   }
-  return `${base} · reassigned by ${actor} · ${formattedTimestamp}`;
+  return `${base} (reassigned by ${actor})`;
 }
 
 function formatOwnershipActor(value: string): string {

@@ -20,6 +20,7 @@ import { DismissableNavIcon } from './components/DismissableNavIcon';
 import { DoseSpotIcon } from './components/DoseSpotIcon';
 import { TaskDetailsModal } from './components/tasks/TaskDetailsModal';
 import { hasDoseSpotIdentifier } from './components/utils';
+import { MessagesNotificationIcon } from './components/messages/MessagesNotificationIcon';
 import './index.css';
 
 const SETUP_DISMISSED_KEY = 'medplum-provider-setup-dismissed';
@@ -92,10 +93,7 @@ export function App(): JSX.Element | null {
                   { icon: <IconCalendarEvent />, label: 'Schedule', href: '/schedule' },
                   {
                     icon: (
-                      <NotificationIcon
-                        resourceType="Communication"
-                        countCriteria={`recipient=${getReferenceString(profile)}&sender:not=${getReferenceString(profile)}&status:not=completed&part-of:missing=false&part-of:Communication.status=in-progress&_summary=count`}
-                        subscriptionCriteria={`Communication?recipient=${getReferenceString(profile)}&part-of:missing=false&part-of:Communication.status=in-progress`}
+                      <MessagesNotificationIcon
                         iconComponent={<IconMail />}
                       />
                     ),

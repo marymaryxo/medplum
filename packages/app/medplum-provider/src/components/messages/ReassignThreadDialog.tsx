@@ -54,7 +54,7 @@ export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Elem
   };
 
   return (
-    <Modal opened={props.opened} onClose={handleClose} title="Reassign to provider" size="md">
+    <Modal opened={props.opened} onClose={handleClose} title="Reassign thread" size="md">
       <Stack gap="xl">
         <Stack gap={0}>
           <Text fw={500}>Provider</Text>

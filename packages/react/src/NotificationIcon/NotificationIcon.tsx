@@ -62,8 +62,9 @@ export function NotificationIcon(props: NotificationIconProps): JSX.Element {
 
   // If there is an unread count, add an Indicator
   if (unreadCount > 0) {
+    const badgeLabel = unreadCount > 99 ? '99+' : unreadCount.toLocaleString();
     result = (
-      <Indicator inline label={unreadCount.toLocaleString()} size={16} offset={2} position="bottom-end" color="red">
+      <Indicator inline label={badgeLabel} size={16} offset={2} position="bottom-end" color="red">
         {result}
       </Indicator>
     );

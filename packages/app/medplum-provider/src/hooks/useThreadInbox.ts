@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Communication } from '@medplum/fhirtypes';
 import { useMedplum } from '@medplum/react';
-import { getReferenceString } from '@medplum/core';
+import { getDisplayString, getReferenceString } from '@medplum/core';
 
 const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
 
@@ -90,13 +90,20 @@ export function useThreadInbox({
   const fetchAllCommunications = useCallback(async (): Promise<void> => {
     const searchParams = new URLSearchParams(query);
     const requestedStatus = searchParams.get('status') as Communication['status'] | null;
+    if (requestedStatus === 'completed') {
+      // Done needs both truly completed threads and reassigned-away threads that stay in-progress for assignees.
+      // Remove server-side status restriction and apply status logic client-side below.
+      searchParams.delete('status');
+    }
     const profile = medplum.getProfile();
     const profileRefStr = profile ? getReferenceString(profile) : undefined;
+    const profileDisplay = profile ? getDisplayString(profile as any) : undefined;
     const isAdminUser = isAdminProfile(profile as { email?: string; username?: string; telecom?: { system?: string; value?: string }[] } | undefined);
     const recipientForQuery = recipientRefOverride ?? profileRefStr;
     const shouldFilterByRecipient =
       !!recipientForQuery &&
       requestedStatus === 'in-progress' &&
+      !!recipientRefOverride &&
       !(isAdminUser && !recipientRefOverride);
     if (shouldFilterByRecipient) {
       // Inbox should only contain threads assigned to current provider.
@@ -176,8 +183,51 @@ export function useThreadInbox({
         const lastMessage = childList && childList.length > 0 ? childList[0] : undefined;
         return [parent, lastMessage];
       });
+    const effectiveProfileRefStr = recipientRefOverride ?? profileRefStr;
     const filteredThreads = requestedStatus
-      ? threadsWithReplies.filter(([parent]) => parent.status === requestedStatus)
+      ? threadsWithReplies.filter(([parent]) => {
+          const isReassignedThread = !!parent.identifier?.some(
+            (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
+          );
+          const assignerRefFromThreadState = parent.identifier?.find(
+            (id) => id.system === 'https://medplum.com/thread-state/assigner-ref'
+          )?.value;
+          const assignerDisplayFromThreadState = parent.identifier?.find(
+            (id) => id.system === 'https://medplum.com/thread-state/assigner-display'
+          )?.value;
+          const assignedToEffectiveProfile =
+            !!effectiveProfileRefStr &&
+            !!parent.recipient?.some((r) => referenceMatches(r.reference, effectiveProfileRefStr));
+          const reassignedAwayFromEffectiveProfile =
+            !!effectiveProfileRefStr && isReassignedThread && !assignedToEffectiveProfile;
+          const assignedByEffectiveProfile =
+            isReassignedThread &&
+            ((!!effectiveProfileRefStr && referenceMatches(assignerRefFromThreadState, effectiveProfileRefStr)) ||
+              (!!profileDisplay && normalizeName(assignerDisplayFromThreadState) === normalizeName(profileDisplay)));
+
+          const recipientMatchesEffectiveProfile = !!effectiveProfileRefStr
+            ? !!parent.recipient?.some(
+                (r) =>
+                  referenceMatches(r.reference, effectiveProfileRefStr) ||
+                  (profileDisplay && normalizeName(r.display) === normalizeName(profileDisplay))
+              )
+            : false;
+
+          if (requestedStatus === 'in-progress') {
+            if (!isAdminUser || recipientRefOverride) {
+              // Provider inbox (or delegated provider read-only): only include assigned threads.
+              return parent.status === 'in-progress' && recipientMatchesEffectiveProfile && !reassignedAwayFromEffectiveProfile;
+            }
+            // Reassigned-away threads should not remain in Inbox for that user.
+            return parent.status === 'in-progress' && !reassignedAwayFromEffectiveProfile;
+          }
+          if (requestedStatus === 'completed') {
+            // Reassigned-away threads should still be visible in Done for that user
+            // even if the parent remains in-progress for the new assignee.
+            return parent.status === 'completed' || reassignedAwayFromEffectiveProfile || assignedByEffectiveProfile;
+          }
+          return parent.status === requestedStatus;
+        })
       : threadsWithReplies;
 
     const sortedThreads = [...filteredThreads].sort((a, b) => {
@@ -220,6 +270,23 @@ export function useThreadInbox({
       // opening a thread should remove unread styling for that open thread.
       if (readOnlyMode && recipientRefOverride && threadId) {
         ids.delete(threadId);
+      }
+
+      // If unread messages arrive on a Done thread, move parent thread back to Inbox.
+      if (!readOnlyMode) {
+        const parentsToReopen = parents.filter((p) => p.id && p.status === 'completed' && ids.has(p.id));
+        if (parentsToReopen.length > 0) {
+          await Promise.all(
+            parentsToReopen.map((parent) =>
+              medplum.updateResource({
+                ...parent,
+                status: 'in-progress',
+              })
+            )
+          );
+          await fetchAllCommunications();
+          return;
+        }
       }
       setUnreadThreadIds(ids);
     }
@@ -431,4 +498,19 @@ function isAdminProfile(
   }
   const practitionerEmail = profile.telecom?.find((t) => t.system === 'email')?.value;
   return practitionerEmail?.toLowerCase() === 'admin@example.com';
+}
+
+function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {
+  if (!refStr || !otherRefStr) {
+    return false;
+  }
+  const normalize = (s: string): string => {
+    const parts = s.split('/').filter(Boolean);
+    return parts.length >= 2 ? parts.slice(-2).join('/') : s;
+  };
+  return normalize(refStr) === normalize(otherRefStr);
+}
+
+function normalizeName(value: string | undefined): string {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 }

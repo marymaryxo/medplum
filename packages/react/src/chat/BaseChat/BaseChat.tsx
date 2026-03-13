@@ -3,17 +3,19 @@
 import type { PaperProps } from '@mantine/core';
 import {
   ActionIcon,
-  Anchor,
   Box,
   Button,
   Group,
+  Image,
   LoadingOverlay,
+  Modal,
   Paper,
   ScrollArea,
   Skeleton,
   Stack,
   Text,
   Title,
+  UnstyledButton,
 } from '@mantine/core';
 import { RichTextEditor, Link as TiptapLink } from '@mantine/tiptap';
 import { useEditor } from '@tiptap/react';
@@ -26,8 +28,8 @@ import type { ProfileResource, WithId } from '@medplum/core';
 import { getDisplayString, getReferenceString, normalizeErrorString } from '@medplum/core';
 import type { Attachment, Bundle, Communication, Reference } from '@medplum/fhirtypes';
 import { useCachedBinaryUrl, useMedplum, useResource, useSubscription } from '@medplum/react-hooks';
-import { IconArrowRight, IconPaperclip } from '@tabler/icons-react';
-import type { JSX, LegacyRef } from 'react';
+import { IconArrowRight, IconDownload, IconFile, IconFileText, IconFileTypePdf, IconPaperclip } from '@tabler/icons-react';
+import type { JSX, LegacyRef, MouseEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import cx from 'clsx';
@@ -380,7 +382,9 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
   }, [medplum, setCommunications, query, onMessageReceived, onMessagesMarkedAsRead, profileRefStr]);
 
   useEffect(() => {
-    searchMessages().catch((err) => showNotification({ color: 'red', message: normalizeErrorString(err) }));
+    searchMessages(initialLoadRef.current).catch((err) =>
+      showNotification({ color: 'red', message: normalizeErrorString(err) })
+    );
   }, [searchMessages]);
 
   const subscriptionCallback = useCallback(
@@ -525,6 +529,15 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
       ),
     [communications]
   );
+  const lastOutgoingMessageId = useMemo(() => {
+    for (let i = visibleCommunications.length - 1; i >= 0; i--) {
+      const comm = visibleCommunications[i];
+      if (referenceMatches(getReferenceString(comm.sender as Reference), profileRefStr)) {
+        return comm.id;
+      }
+    }
+    return undefined;
+  }, [visibleCommunications, profileRefStr]);
 
   useEffect(() => {
     if (communications !== prevCommunicationsRef.current) {
@@ -610,7 +623,12 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                     profileRefStr
                   ) ? (
                     <Group justify="flex-end" align="flex-end" gap="xs" mb="sm">
-                      <ChatBubble alignment="right" communication={c} readStatus={readStatus} />
+                      <ChatBubble
+                        alignment="right"
+                        communication={c}
+                        readStatus={readStatus}
+                        showReadReceipt={c.id === lastOutgoingMessageId}
+                      />
                       <ResourceAvatar
                         radius="xl"
                         color="orange"
@@ -626,6 +644,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                           alignment="left"
                           communication={c}
                           readStatus={readStatus}
+                          showReadReceipt={false}
                           isPatientBubble={
                             (!!subjectRef &&
                               referenceMatches(
@@ -703,22 +722,9 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                         <RichTextEditor.Bold />
                         <RichTextEditor.Italic />
                         <RichTextEditor.Underline />
-                        <RichTextEditor.Strikethrough />
-                        <RichTextEditor.ClearFormatting />
-                      </RichTextEditor.ControlsGroup>
-                      <RichTextEditor.ControlsGroup>
                         <RichTextEditor.BulletList />
                         <RichTextEditor.OrderedList />
-                        <RichTextEditor.Blockquote />
-                        <RichTextEditor.Hr />
-                      </RichTextEditor.ControlsGroup>
-                      <RichTextEditor.ControlsGroup>
                         <RichTextEditor.Link />
-                        <RichTextEditor.Unlink />
-                      </RichTextEditor.ControlsGroup>
-                      <RichTextEditor.ControlsGroup>
-                        <RichTextEditor.Undo />
-                        <RichTextEditor.Redo />
                       </RichTextEditor.ControlsGroup>
                     </RichTextEditor.Toolbar>
                     <RichTextEditor.Content />
@@ -792,10 +798,11 @@ function getAttachmentDisplayName(attachment: Attachment): string {
   return 'Attachment';
 }
 
-function AttachmentLink(props: { attachment: Attachment; index: number; attachmentOnly?: boolean }): JSX.Element {
-  const { attachment, index } = props;
+function AttachmentItem(props: { attachment: Attachment; index: number; attachmentOnly?: boolean }): JSX.Element {
+  const { attachment, index, attachmentOnly } = props;
   const resolvedUrl = useCachedBinaryUrl(attachment.url);
   const medplum = useMedplum();
+  const [previewOpened, setPreviewOpened] = useState(false);
   const rawUrl = resolvedUrl ?? attachment.url;
   const href = rawUrl
     ? rawUrl.startsWith('http')
@@ -803,27 +810,99 @@ function AttachmentLink(props: { attachment: Attachment; index: number; attachme
       : `${medplum.getBaseUrl()}fhir/R4/${rawUrl.replace(/^\//, '')}`
     : undefined;
   const displayName = getAttachmentDisplayName(attachment);
+  const isImage = isImageAttachment(attachment, displayName);
+  const fileSize = formatFileSize(attachment.size);
+
+  const openAttachment = (): void => {
+    if (!href) {
+      return;
+    }
+    if (isImage) {
+      setPreviewOpened(true);
+      return;
+    }
+    window.open(href, '_blank', 'noopener,noreferrer');
+  };
+
+  const downloadAttachment = (e: MouseEvent): void => {
+    e.stopPropagation();
+    if (!href) {
+      return;
+    }
+    window.open(href, '_blank', 'noopener,noreferrer');
+  };
+
   if (!href) {
     return (
-      <Text key={index} size="sm" c="dimmed" fw={500}>
-        {displayName}
-      </Text>
+      <div key={index} className={classes.fileChip}>
+        <Group gap={6} wrap="nowrap">
+          <span className={classes.fileChipIcon}>{getAttachmentTypeIcon(attachment)}</span>
+          <Text size="xs" truncate maw={220} fw={500}>
+            {displayName}
+          </Text>
+        </Group>
+      </div>
     );
   }
+
+  if (isImage) {
+    return (
+      <>
+        <UnstyledButton key={index} onClick={openAttachment} className={classes.inlineImageButton}>
+          <Image
+            src={href}
+            alt={displayName}
+            className={classes.inlineImage}
+            radius="sm"
+            fallbackSrc=""
+          />
+        </UnstyledButton>
+        <Modal
+          opened={previewOpened}
+          onClose={() => setPreviewOpened(false)}
+          fullScreen
+          centered
+          withCloseButton
+          title={displayName}
+        >
+          <Box className={classes.fullscreenImageWrap}>
+            <Image src={href} alt={displayName} className={classes.fullscreenImage} fit="contain" />
+          </Box>
+        </Modal>
+      </>
+    );
+  }
+
   return (
-    <Anchor
+    <UnstyledButton
       key={index}
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      size="sm"
-      fw={500}
-      c="blue"
-      underline="always"
-      style={{ textUnderlineOffset: 2 }}
+      onClick={openAttachment}
+      className={cx(classes.fileChip, attachmentOnly && classes.fileChipAttachmentOnly)}
     >
-      {displayName}
-    </Anchor>
+      <Group justify="space-between" gap={8} wrap="nowrap">
+        <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          <span className={classes.fileChipIcon}>{getAttachmentTypeIcon(attachment)}</span>
+          <Text size="xs" truncate maw={220} fw={500}>
+            {displayName}
+          </Text>
+          {fileSize && (
+            <Text size="xs" c="dimmed" className={classes.fileChipSize}>
+              {fileSize}
+            </Text>
+          )}
+        </Group>
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          color="gray"
+          className={classes.fileChipDownload}
+          aria-label={`Download ${displayName}`}
+          onClick={downloadAttachment}
+        >
+          <IconDownload size={14} />
+        </ActionIcon>
+      </Group>
+    </UnstyledButton>
   );
 }
 
@@ -832,6 +911,8 @@ interface ChatBubbleProps {
   readonly alignment: 'left' | 'right';
   /** 'read' | 'unread' | null - for provider's messages, show if recipient has read */
   readonly readStatus?: 'read' | 'unread' | null;
+  /** When true, render a receipt for this message. */
+  readonly showReadReceipt?: boolean;
   /** When true, apply patient (red) bubble styling */
   readonly isPatientBubble?: boolean;
 }
@@ -889,7 +970,7 @@ function hasAttachmentPayload(payload: Communication['payload']): boolean {
 }
 
 function ChatBubble(props: ChatBubbleProps): JSX.Element {
-  const { communication, alignment, readStatus, isPatientBubble = false } = props;
+  const { communication, alignment, readStatus, showReadReceipt = false, isPatientBubble = false } = props;
   const showPatientStyling = alignment === 'left' || isPatientBubble;
   const payloadItems = communication.payload ?? [];
   const messageContent = extractMessageContent(communication.payload);
@@ -902,7 +983,6 @@ function ChatBubble(props: ChatBubbleProps): JSX.Element {
     (hasAttachmentPayload(communication.payload) && !content) ||
     (!content && payloadHasItems);
   const sentTime = new Date(communication.sent ?? -1);
-  const seenTime = new Date(communication.received ?? -1);
   const senderResource = useResource(communication.sender);
 
   return (
@@ -952,7 +1032,7 @@ function ChatBubble(props: ChatBubbleProps): JSX.Element {
               {attachmentItems.length > 0 ? (
                 <Stack gap={4} mt={content ? 'xs' : 0}>
                   {attachmentItems.map((att, i) => (
-                    <AttachmentLink key={i} attachment={att} index={i} attachmentOnly={!content} />
+                    <AttachmentItem key={i} attachment={att} index={i} attachmentOnly={!content} />
                   ))}
                 </Stack>
               ) : null}
@@ -960,19 +1040,72 @@ function ChatBubble(props: ChatBubbleProps): JSX.Element {
           )}
         </div>
       </div>
-      {readStatus === 'read' && (
+      {readStatus === 'read' && showReadReceipt && (
         <Text fz="xs" c="dimmed" style={{ textAlign: 'right' }} aria-label="Read by recipient">
-          Read {seenTime.getHours()}:{seenTime.getMinutes().toString().length === 1 ? '0' : ''}
-          {seenTime.getMinutes()}
+          {formatReadReceipt(communication)}
         </Text>
       )}
-      {readStatus === 'unread' && (
+      {readStatus === 'unread' && showReadReceipt && (
         <Text fz="xs" c="dimmed" style={{ textAlign: 'right' }} aria-label="Unread by recipient">
-          Unread
+          Sent
         </Text>
       )}
     </div>
   );
+}
+
+function formatReadReceipt(communication: Communication): string {
+  const received = communication.received ? new Date(communication.received) : undefined;
+  if (!received || Number.isNaN(received.getTime())) {
+    return 'Read';
+  }
+  const now = new Date();
+  const isToday =
+    received.getFullYear() === now.getFullYear() &&
+    received.getMonth() === now.getMonth() &&
+    received.getDate() === now.getDate();
+  if (isToday) {
+    return `Read ${received.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  return `Read ${received.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function isImageAttachment(attachment: Attachment, displayName: string): boolean {
+  if (attachment.contentType?.toLowerCase().startsWith('image/')) {
+    return true;
+  }
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(displayName);
+}
+
+function getAttachmentTypeIcon(attachment: Attachment): JSX.Element {
+  const type = attachment.contentType?.toLowerCase() ?? '';
+  if (type.includes('pdf')) {
+    return <IconFileTypePdf size={14} />;
+  }
+  if (
+    type.includes('word') ||
+    type.includes('officedocument') ||
+    type.includes('text') ||
+    type.includes('rtf')
+  ) {
+    return <IconFileText size={14} />;
+  }
+  return <IconFile size={14} />;
+}
+
+function formatFileSize(size: number | undefined): string | undefined {
+  if (!size || size <= 0) {
+    return undefined;
+  }
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  const kb = size / 1024;
+  if (kb < 1024) {
+    return `${kb.toFixed(1)} KB`;
+  }
+  const mb = kb / 1024;
+  return `${mb.toFixed(1)} MB`;
 }
 
 export interface ChatBubbleSkeletonProps {
