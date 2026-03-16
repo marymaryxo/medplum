@@ -224,7 +224,8 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
       const reassignmentMessage = `${fromProviderName} reassigned ${patientName}'s thread to you.`;
       const nowMs = Date.now();
       const ownershipEventIso = new Date(nowMs).toISOString();
-      const reassignmentEventIso = new Date(nowMs + 1).toISOString();
+      // Keep at least 2s gap so ordering remains deterministic with second-level DB precision.
+      const reassignmentEventIso = new Date(nowMs + 2000).toISOString();
 
       await medplum.updateResource({
         ...selectedThread,

@@ -4,7 +4,7 @@
 import { Alert, Loader, Paper, ScrollArea, Table, Text, Title } from '@mantine/core';
 import { getDisplayString, getReferenceString } from '@medplum/core';
 import type { Communication, Practitioner } from '@medplum/fhirtypes';
-import { useMedplum } from '@medplum/react';
+import { useMedplum, useMedplumProfile } from '@medplum/react';
 import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 
@@ -23,6 +23,8 @@ interface ProviderRow {
 export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Element {
   const { onSelectProvider } = props;
   const medplum = useMedplum();
+  const profile = useMedplumProfile();
+  const adminProfileRef = normalizeRef(getReferenceString(profile as Practitioner));
   const [rows, setRows] = useState<ProviderRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | undefined>();
@@ -34,15 +36,13 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
         setLoading(true);
         setError(undefined);
 
-        const activeThreads = await medplum.searchResources('Communication', {
+        const activeThreads = await searchAllCommunications(medplum, {
           'part-of:missing': 'true',
           status: 'in-progress',
-          _count: '500',
         });
-        const openMessages = await medplum.searchResources('Communication', {
+        const openMessages = await searchAllCommunications(medplum, {
           'part-of:missing': 'false',
           'status:not': 'completed',
-          _count: '1000',
         });
 
         const activeByProvider = new Map<string, number>();
@@ -86,6 +86,9 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
           ...activeByProvider.keys(),
           ...unansweredThreadIdsByProvider.keys(),
         ]);
+        if (adminProfileRef) {
+          providerRefs.add(adminProfileRef);
+        }
         const providerNameMap = await loadProviderNames(medplum, providerRefs);
         const nextRows = [...providerRefs]
           .map((providerRef) => ({
@@ -114,7 +117,7 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
     return () => {
       isMounted = false;
     };
-  }, [medplum]);
+  }, [adminProfileRef, medplum]);
 
   const tableRows = useMemo(
     () =>
@@ -176,6 +179,38 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
       )}
     </Paper>
   );
+}
+
+async function searchAllCommunications(
+  medplum: ReturnType<typeof useMedplum>,
+  params: Record<string, string>
+): Promise<Communication[]> {
+  const count = 500;
+  let offset = 0;
+  let total: number | undefined;
+  const results: Communication[] = [];
+
+  while (total === undefined || offset < total) {
+    const pageParams = new URLSearchParams({
+      ...params,
+      _count: String(count),
+      _offset: String(offset),
+    });
+    const bundle = await medplum.search('Communication', pageParams.toString(), { cache: 'no-cache' });
+    const pageRows =
+      bundle.entry
+        ?.map((entry) => entry.resource as Communication | undefined)
+        .filter((r): r is Communication => !!r) ?? [];
+    results.push(...pageRows);
+
+    total = bundle.total ?? pageRows.length;
+    if (pageRows.length === 0) {
+      break;
+    }
+    offset += pageRows.length;
+  }
+
+  return results;
 }
 
 async function loadProviderNames(

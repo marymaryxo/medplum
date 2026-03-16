@@ -53,6 +53,13 @@ function extractTopicId(entry: { response?: { location?: string }; resource?: { 
   return entry?.resource?.id;
 }
 
+const REASSIGN_REASON_OPTIONS = [
+  'Provider unavailable (vacation/leave)',
+  'Provider leaving the company',
+  'Member requested change',
+  'Other',
+];
+
 export function GetStartedPage(): JSX.Element {
   const medplum = useMedplum();
   const profile = useMedplumProfile();
@@ -192,7 +199,11 @@ export function GetStartedPage(): JSX.Element {
       const reassignmentSenderRef = adminRefStr || 'Practitioner/medplum-admin-simulated';
       const priorOwner =
         thread.recipient?.[0]?.display || thread.recipient?.[0]?.reference?.split('/').pop() || 'Unassigned';
-      const nowIso = new Date().toISOString();
+      const randomReason = REASSIGN_REASON_OPTIONS[Math.floor(Math.random() * REASSIGN_REASON_OPTIONS.length)];
+      const nowMs = Date.now();
+      const ownershipEventIso = new Date(nowMs).toISOString();
+      // Keep at least 2s gap so ordering remains deterministic with second-level DB precision.
+      const reassignmentEventIso = new Date(nowMs + 2000).toISOString();
 
       await medplum.updateResource({
         ...thread,
@@ -203,25 +214,21 @@ export function GetStartedPage(): JSX.Element {
             (id) =>
               !(
                 (id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you') ||
-                id.system === 'https://medplum.com/thread-state/assigner-display'
+                id.system === 'https://medplum.com/thread-state/assigner-display' ||
+                id.system === 'https://medplum.com/thread-state/assigner-ref' ||
+                id.system === 'https://medplum.com/thread-state/reassign-reason' ||
+                id.system === 'https://medplum.com/thread-state/reassigned-at'
               )
           ),
           { system: 'https://medplum.com/thread-state', value: 'reassigned-to-you' },
           { system: 'https://medplum.com/thread-state/assigner-display', value: assignerDisplay },
+          ...(adminRefStr ? [{ system: 'https://medplum.com/thread-state/assigner-ref', value: adminRefStr }] : []),
+          { system: 'https://medplum.com/thread-state/reassign-reason', value: randomReason },
+          { system: 'https://medplum.com/thread-state/reassigned-at', value: reassignmentEventIso },
         ],
       });
 
       const patientName = thread.subject?.display ?? 'the patient';
-      await medplum.createResource<Communication>({
-        resourceType: 'Communication',
-        status: 'in-progress',
-        sender: { reference: reassignmentSenderRef, display: assignerDisplay },
-        recipient: [{ reference: profileRefStr, display: profileDisplay }],
-        partOf: [{ reference: `Communication/${thread.id}` }],
-        identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
-        payload: [{ contentString: `${assignerDisplay} reassigned ${patientName}'s thread to you.` }],
-        sent: nowIso,
-      });
       await medplum.createResource<Communication>({
         resourceType: 'Communication',
         status: 'completed',
@@ -234,11 +241,22 @@ export function GetStartedPage(): JSX.Element {
               priorOwner,
               newOwner: profileDisplay,
               actor: assignerDisplay,
-              timestamp: nowIso,
+              timestamp: reassignmentEventIso,
+              reason: randomReason,
             }),
           },
         ],
-        sent: nowIso,
+        sent: ownershipEventIso,
+      });
+      await medplum.createResource<Communication>({
+        resourceType: 'Communication',
+        status: 'in-progress',
+        sender: { reference: reassignmentSenderRef, display: assignerDisplay },
+        recipient: [{ reference: profileRefStr, display: profileDisplay }],
+        partOf: [{ reference: `Communication/${thread.id}` }],
+        identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
+        payload: [{ contentString: `${assignerDisplay} reassigned ${patientName}'s thread to you.` }],
+        sent: reassignmentEventIso,
       });
 
       showNotification({

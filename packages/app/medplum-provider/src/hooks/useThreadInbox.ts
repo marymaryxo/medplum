@@ -8,13 +8,9 @@ import { getDisplayString, getReferenceString } from '@medplum/core';
 const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
 const OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadIds';
 
-function getScopedStorageKey(baseKey: string, profileRefStr: string | undefined): string {
-  return profileRefStr ? `${baseKey}:${profileRefStr}` : `${baseKey}:anonymous`;
-}
-
-function loadUserMarkedUnreadFromStorage(profileRefStr?: string): Set<string> {
+function loadUserMarkedUnreadFromStorage(): Set<string> {
   try {
-    const stored = sessionStorage.getItem(getScopedStorageKey(USER_MARKED_UNREAD_STORAGE_KEY, profileRefStr));
+    const stored = sessionStorage.getItem(USER_MARKED_UNREAD_STORAGE_KEY);
     if (stored) {
       const arr = JSON.parse(stored) as string[];
       return new Set(Array.isArray(arr) ? arr : []);
@@ -25,17 +21,17 @@ function loadUserMarkedUnreadFromStorage(profileRefStr?: string): Set<string> {
   return new Set();
 }
 
-function saveUserMarkedUnreadToStorage(ids: Set<string>, profileRefStr?: string): void {
+function saveUserMarkedUnreadToStorage(ids: Set<string>): void {
   try {
-    sessionStorage.setItem(getScopedStorageKey(USER_MARKED_UNREAD_STORAGE_KEY, profileRefStr), JSON.stringify([...ids]));
+    sessionStorage.setItem(USER_MARKED_UNREAD_STORAGE_KEY, JSON.stringify([...ids]));
   } catch {
     // ignore storage errors
   }
 }
 
-function loadOpenedReassignedFromStorage(profileRefStr?: string): Set<string> {
+function loadOpenedReassignedFromStorage(): Set<string> {
   try {
-    const stored = sessionStorage.getItem(getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr));
+    const stored = localStorage.getItem(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY);
     if (stored) {
       const arr = JSON.parse(stored) as string[];
       return new Set(Array.isArray(arr) ? arr : []);
@@ -46,12 +42,9 @@ function loadOpenedReassignedFromStorage(profileRefStr?: string): Set<string> {
   return new Set();
 }
 
-function saveOpenedReassignedToStorage(ids: Set<string>, profileRefStr?: string): void {
+function saveOpenedReassignedToStorage(ids: Set<string>): void {
   try {
-    sessionStorage.setItem(
-      getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr),
-      JSON.stringify([...ids])
-    );
+    localStorage.setItem(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, JSON.stringify([...ids]));
   } catch {
     // ignore storage errors
   }
@@ -101,32 +94,19 @@ export function useThreadInbox({
   readOnlyMode = false,
 }: UseThreadInboxOptions): UseThreadInboxReturn {
   const medplum = useMedplum();
-  const initialProfile = medplum.getProfile();
-  const currentProfileRefStr = useRef<string | undefined>(initialProfile ? getReferenceString(initialProfile) : undefined);
   const [loading, setLoading] = useState(true);
   const [threadMessages, setThreadMessages] = useState<[Communication, Communication | undefined][]>([]);
   const [selectedThread, setSelectedThread] = useState<Communication | undefined>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const [total, setTotal] = useState<number | undefined>(undefined);
   const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
-  const [userMarkedUnreadThreadIds, setUserMarkedUnreadThreadIds] = useState<Set<string>>(
-    loadUserMarkedUnreadFromStorage(currentProfileRefStr.current)
-  );
-  const userMarkedUnreadRef = useRef<Set<string>>(loadUserMarkedUnreadFromStorage(currentProfileRefStr.current));
+  const [userMarkedUnreadThreadIds, setUserMarkedUnreadThreadIds] = useState<Set<string>>(loadUserMarkedUnreadFromStorage);
+  const userMarkedUnreadRef = useRef<Set<string>>(loadUserMarkedUnreadFromStorage());
   userMarkedUnreadRef.current = userMarkedUnreadThreadIds;
-
-  useEffect(() => {
-    const profile = medplum.getProfile();
-    const profileRefStr = profile ? getReferenceString(profile) : undefined;
-    currentProfileRefStr.current = profileRefStr;
-    const scoped = loadUserMarkedUnreadFromStorage(profileRefStr);
-    userMarkedUnreadRef.current = scoped;
-    setUserMarkedUnreadThreadIds(scoped);
-  }, [medplum]);
 
   // Persist userMarkedUnreadThreadIds across page navigation (e.g. Messages -> Schedule -> Messages)
   useEffect(() => {
-    saveUserMarkedUnreadToStorage(userMarkedUnreadThreadIds, currentProfileRefStr.current);
+    saveUserMarkedUnreadToStorage(userMarkedUnreadThreadIds);
   }, [userMarkedUnreadThreadIds]);
 
   const fetchAllCommunications = useCallback(async (): Promise<void> => {
@@ -144,7 +124,6 @@ export function useThreadInbox({
     }
     const profile = medplum.getProfile();
     const profileRefStr = profile ? getReferenceString(profile) : undefined;
-    currentProfileRefStr.current = profileRefStr;
     const profileDisplay = profile ? getDisplayString(profile as any) : undefined;
     const recipientForQuery = recipientRefOverride ?? profileRefStr;
     const shouldFilterByRecipient =
@@ -271,19 +250,27 @@ export function useThreadInbox({
         })
       : threadsWithReplies;
 
-    const openedReassignedThreadIds = loadOpenedReassignedFromStorage(profileRefStr);
+    const openedReassignedThreadIds = readOnlyMode ? new Set<string>() : loadOpenedReassignedFromStorage();
     const sortedThreads = [...filteredThreads].sort((a, b) => {
       const aReassignedPriority =
-        isReassignedPriorityThread(a) && !openedReassignedThreadIds.has(a[0].id ?? '') ? 1 : 0;
+        requestedStatus === 'in-progress' &&
+        isUnopenedReassignedArrivalThread(a, effectiveProfileRefStr, openedReassignedThreadIds)
+          ? 1
+          : 0;
       const bReassignedPriority =
-        isReassignedPriorityThread(b) && !openedReassignedThreadIds.has(b[0].id ?? '') ? 1 : 0;
+        requestedStatus === 'in-progress' &&
+        isUnopenedReassignedArrivalThread(b, effectiveProfileRefStr, openedReassignedThreadIds)
+          ? 1
+          : 0;
       if (aReassignedPriority !== bReassignedPriority) {
         return bReassignedPriority - aReassignedPriority;
       }
-      const aReassignedAt = getReassignedAtMs(a[0]);
-      const bReassignedAt = getReassignedAtMs(b[0]);
-      if (aReassignedAt !== bReassignedAt) {
-        return bReassignedAt - aReassignedAt;
+      if (aReassignedPriority === 1 && bReassignedPriority === 1) {
+        const aReassignedAt = getReassignedAtMs(a[0]);
+        const bReassignedAt = getReassignedAtMs(b[0]);
+        if (aReassignedAt !== bReassignedAt) {
+          return bReassignedAt - aReassignedAt;
+        }
       }
       const aTime = getThreadSortTimeMs(a);
       const bTime = getThreadSortTimeMs(b);
@@ -314,29 +301,14 @@ export function useThreadInbox({
           ids.add(id);
         }
       }
-      // In delegated read-only provider view, mirror provider inbox behavior:
-      // opening a thread should remove unread styling for that open thread.
-      if (readOnlyMode && recipientRefOverride && threadId) {
-        ids.delete(threadId);
-      }
-      // Reassigned threads should be unread + top priority until first open.
-      // Enforce unread here in case child-message status timing lags.
-      for (const [parent, lastMessage] of filteredThreads) {
-        const parentId = parent.id;
-        if (!parentId || openedReassignedThreadIds.has(parentId)) {
+      // Guarantee reassigned arrival threads appear unread for assignee
+      // until the assignee opens them once.
+      for (const thread of sortedThreads) {
+        if (!isUnopenedReassignedArrivalThread(thread, effectiveProfileRefStr, openedReassignedThreadIds)) {
           continue;
         }
-        if (!isReassignedPriorityThread([parent, lastMessage])) {
-          continue;
-        }
-        const assignedToEffectiveProfile =
-          !!effectiveProfileRefStr &&
-          !!parent.recipient?.some((r) => referenceMatches(r.reference, effectiveProfileRefStr));
-        if (assignedToEffectiveProfile) {
-          ids.add(parentId);
-        }
+        ids.add(thread[0].id as string);
       }
-
       // If unread messages arrive on a Done thread, move parent thread back to Inbox.
       if (!readOnlyMode) {
         const parentsToReopen = parents.filter((p) => p.id && p.status === 'completed' && ids.has(p.id));
@@ -376,16 +348,19 @@ export function useThreadInbox({
     if (!shouldHandleOpenAsRead) {
       return;
     }
+    const currentProfileRefStr = recipientRefOverride ?? getReferenceString(medplum.getProfile());
     const prevId = prevThreadIdRef.current;
     prevThreadIdRef.current = threadId;
     if (threadId && prevId !== threadId) {
       const openedThread = threadMessages.find(([parent]) => parent.id === threadId);
-      if (openedThread && isReassignedPriorityThread(openedThread)) {
-        const profile = medplum.getProfile();
-        const profileRefStr = profile ? getReferenceString(profile) : undefined;
-        const opened = loadOpenedReassignedFromStorage(profileRefStr);
+      if (
+        !readOnlyMode &&
+        openedThread &&
+        isUnopenedReassignedArrivalThread(openedThread, currentProfileRefStr, loadOpenedReassignedFromStorage())
+      ) {
+        const opened = loadOpenedReassignedFromStorage();
         opened.add(threadId);
-        saveOpenedReassignedToStorage(opened, profileRefStr);
+        saveOpenedReassignedToStorage(opened);
       }
       // User is opening this thread - remove so it will become read when they view
       if (!readOnlyMode) {
@@ -396,13 +371,15 @@ export function useThreadInbox({
         });
       }
       // Optimistic: immediately show as read in list (don't wait for API)
-      setUnreadThreadIds((prev) => {
-        const next = new Set(prev);
-        next.delete(threadId);
-        return next;
-      });
+      if (!readOnlyMode) {
+        setUnreadThreadIds((prev) => {
+          const next = new Set(prev);
+          next.delete(threadId);
+          return next;
+        });
+      }
     }
-  }, [threadId, readOnlyMode, recipientRefOverride, threadMessages]);
+  }, [medplum, threadId, readOnlyMode, recipientRefOverride, threadMessages]);
 
   useEffect(() => {
     const fetchThread = async (): Promise<void> => {
@@ -559,14 +536,25 @@ function getThreadSortTimeMs([parent, lastMessage]: [Communication, Communicatio
   return 0;
 }
 
-function isReassignedPriorityThread([parent, lastMessage]: [Communication, Communication | undefined]): boolean {
-  const hasParentMarker = !!parent.identifier?.some(
+function isUnopenedReassignedArrivalThread(
+  [parent]: [Communication, Communication | undefined],
+  effectiveProfileRefStr: string | undefined,
+  openedReassignedThreadIds: Set<string>
+): boolean {
+  if (!parent.id || !effectiveProfileRefStr || openedReassignedThreadIds.has(parent.id)) {
+    return false;
+  }
+  const hasReassignedMarker = !!parent.identifier?.some(
     (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
   );
-  const hasLastMessageEvent = !!lastMessage?.identifier?.some(
-    (id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you'
-  );
-  return hasParentMarker || hasLastMessageEvent;
+  if (!hasReassignedMarker) {
+    return false;
+  }
+  if (parent.status !== 'in-progress') {
+    return false;
+  }
+  const assignedToEffectiveProfile = !!parent.recipient?.some((r) => referenceMatches(r.reference, effectiveProfileRefStr));
+  return assignedToEffectiveProfile;
 }
 
 function getReassignedAtMs(parent: Communication): number {

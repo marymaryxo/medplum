@@ -68,7 +68,12 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
   const lastMsg = lastCommunication?.payload?.[0]?.contentString;
   const trimmedMsg = lastMsg?.length && lastMsg.length > 100 ? lastMsg.slice(0, 100) + '...' : lastMsg;
   const senderName = lastCommunication?.sender?.display ? `${lastCommunication?.sender?.display}: ` : '';
-  const content = trimmedMsg ? `${senderName} ${trimmedMsg}` : `No messages available`;
+  const isOwnershipChangeEvent = !!lastCommunication?.identifier?.some(
+    (id) => id.system === 'https://medplum.com/thread-event' && id.value === 'ownership-change'
+  );
+  const isJsonLikeMessage = !!trimmedMsg && /^\s*\{[\s\S]*\}\s*$/.test(trimmedMsg);
+  const safePreview = isOwnershipChangeEvent || isJsonLikeMessage ? 'Thread reassigned' : trimmedMsg;
+  const content = safePreview ? `${senderName} ${safePreview}` : `No messages available`;
 
   return (
     <MedplumLink to={getThreadUri(topic)} underline="never">
