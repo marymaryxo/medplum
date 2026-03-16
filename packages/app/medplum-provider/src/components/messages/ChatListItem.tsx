@@ -35,7 +35,6 @@ interface ChatListItemProps {
   lastCommunication: Communication | undefined;
   isSelected: boolean;
   isUnread?: boolean;
-  isReassignedToYou?: boolean;
   reassignedLabel?: string;
   getThreadUri: (topic: Communication) => string;
 }
@@ -46,7 +45,6 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
     lastCommunication,
     isSelected,
     isUnread = false,
-    isReassignedToYou = false,
     reassignedLabel,
     getThreadUri,
   } = props;
@@ -81,7 +79,6 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
         className={cx(classes.contentContainer, {
           [classes.selected]: isSelected,
           [classes.unread]: isUnread,
-          [classes.reassignedToYou]: isReassignedToYou,
         })}
       >
         <ResourceAvatar value={topic.subject as Reference<Patient>} radius="xl" size={36} />

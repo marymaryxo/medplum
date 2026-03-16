@@ -12,7 +12,6 @@ interface ChatListProps {
   getThreadUri: (topic: Communication) => string;
   unreadThreadIds?: Set<string>;
   currentProfileRefStr?: string;
-  openedReassignedThreadIds?: Set<string>;
 }
 
 function isReassignedToYouMessage(
@@ -32,7 +31,6 @@ export const ChatList = (props: ChatListProps): JSX.Element => {
     getThreadUri,
     unreadThreadIds = new Set(),
     currentProfileRefStr,
-    openedReassignedThreadIds = new Set(),
   } = props;
 
   return (
@@ -43,7 +41,6 @@ export const ChatList = (props: ChatListProps): JSX.Element => {
         const isSelected = selectedCommunication?.id === topicCommunication.id;
         const isUnread = topicCommunication.id ? unreadThreadIds.has(topicCommunication.id) : false;
         const isReassignedThread = isReassignedToYouMessage(topicCommunication, lastCommunication);
-        const wasOpened = !!topicCommunication.id && openedReassignedThreadIds.has(topicCommunication.id);
         const reassignedRecipient = topicCommunication.recipient?.[0];
         const isReassignedToYou =
           isReassignedThread &&
@@ -61,7 +58,6 @@ export const ChatList = (props: ChatListProps): JSX.Element => {
               lastCommunication={lastCommunication}
               isSelected={isSelected}
               isUnread={isUnread}
-              isReassignedToYou={isReassignedThread && !wasOpened}
               reassignedLabel={reassignedLabel}
               getThreadUri={getThreadUri}
             />

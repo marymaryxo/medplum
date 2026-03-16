@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import { Button, Modal, Stack, Text } from '@mantine/core';
+import { Button, Modal, Select, Stack, Text, TextInput } from '@mantine/core';
 import { createReference, getDisplayString } from '@medplum/core';
 import type { Communication, Practitioner, Reference } from '@medplum/fhirtypes';
 import { ResourceInput } from '@medplum/react';
@@ -12,12 +12,15 @@ interface ReassignThreadDialogProps {
   thread: Communication | undefined;
   opened: boolean;
   onClose: () => void;
-  onReassign: (provider: Reference<Practitioner>, displayName: string) => Promise<void>;
+  onReassign: (provider: Reference<Practitioner>, displayName: string, reason?: string) => Promise<void>;
 }
 
 export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Element {
   const { onClose, onReassign } = props;
   const [practitioner, setPractitioner] = useState<Practitioner | Reference<Practitioner> | undefined>();
+  const [reasonOption, setReasonOption] = useState<string | null>(null);
+  const [otherReason, setOtherReason] = useState('');
+  const [reasonError, setReasonError] = useState<string | undefined>();
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (): Promise<void> => {
@@ -31,15 +34,28 @@ export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Elem
       return;
     }
 
+    if (!reasonOption) {
+      setReasonError('Reason is required');
+      return;
+    }
+    if (reasonOption === 'other' && !otherReason.trim()) {
+      setReasonError('Please specify a reason');
+      return;
+    }
+
     const displayName =
       practitioner && typeof practitioner === 'object' && 'reference' in practitioner
         ? (practitioner as Reference<Practitioner>).display ?? 'Unknown provider'
         : getDisplayString(practitioner as Practitioner);
+    const resolvedReason = reasonOption === 'other' ? otherReason.trim() : reasonOption;
 
     setSubmitting(true);
     try {
-      await onReassign(practitionerRef, displayName);
+      await onReassign(practitionerRef, displayName, resolvedReason);
       setPractitioner(undefined);
+      setReasonOption(null);
+      setOtherReason('');
+      setReasonError(undefined);
       onClose();
     } catch (error) {
       showErrorNotification(error);
@@ -50,6 +66,9 @@ export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Elem
 
   const handleClose = (): void => {
     setPractitioner(undefined);
+    setReasonOption(null);
+    setOtherReason('');
+    setReasonError(undefined);
     onClose();
   };
 
@@ -66,6 +85,46 @@ export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Elem
             defaultValue={practitioner}
             onChange={(value) => setPractitioner(value as Practitioner | undefined)}
           />
+        </Stack>
+        <Stack gap={0}>
+          <Text fw={500}>Reason for reassignment</Text>
+          <Select
+            data={[
+              { value: 'Provider unavailable (vacation/leave)', label: 'Provider unavailable (vacation/leave)' },
+              { value: 'Provider leaving the company', label: 'Provider leaving the company' },
+              { value: 'Member requested change', label: 'Member requested change' },
+              { value: 'other', label: 'Other' },
+            ]}
+            value={reasonOption}
+            onChange={(value) => {
+              setReasonOption(value);
+              setReasonError(undefined);
+              if (value !== 'other') {
+                setOtherReason('');
+              }
+            }}
+            placeholder="Select a reason"
+            required
+            error={reasonError}
+          />
+          {reasonOption === 'other' && (
+            <>
+              <TextInput
+                value={otherReason}
+                onChange={(e) => {
+                  setOtherReason(e.currentTarget.value.slice(0, 140));
+                  setReasonError(undefined);
+                }}
+                placeholder="Please specify"
+                maxLength={140}
+                required
+                mt={8}
+              />
+              <Text size="xs" c="dimmed" ta="right">
+                {otherReason.length}/140
+              </Text>
+            </>
+          )}
         </Stack>
 
         <Button onClick={handleSubmit} loading={submitting}>

@@ -28,7 +28,6 @@ import type { JSX } from 'react';
 import {
   IconMessageCircle,
   IconChevronDown,
-  IconFolder,
   IconPlus,
 } from '@tabler/icons-react';
 import { getDisplayString, getReferenceString, parseSearchRequest } from '@medplum/core';
@@ -37,7 +36,6 @@ import type { SearchRequest } from '@medplum/core';
 import { ChatList } from './ChatList';
 import { NewTopicDialog } from './NewTopicDialog';
 import { ReassignThreadDialog } from './ReassignThreadDialog';
-import { SharedFilesDialog } from './SharedFilesDialog';
 import { useThreadInbox } from '../../hooks/useThreadInbox';
 import classes from './ThreadInbox.module.css';
 import { useDisclosure } from '@mantine/hooks';
@@ -45,21 +43,6 @@ import { showErrorNotification } from '../../utils/notifications';
 import { showNotification } from '@mantine/notifications';
 import cx from 'clsx';
 import { Link } from 'react-router';
-
-const REASSIGNED_OPENED_THREAD_IDS_STORAGE_KEY = 'medplum-provider-reassignedOpenedThreadIds';
-
-function loadOpenedReassignedThreadIds(): Set<string> {
-  try {
-    const raw = sessionStorage.getItem(REASSIGNED_OPENED_THREAD_IDS_STORAGE_KEY);
-    if (!raw) {
-      return new Set();
-    }
-    const parsed = JSON.parse(raw) as string[];
-    return new Set(Array.isArray(parsed) ? parsed : []);
-  } catch {
-    return new Set();
-  }
-}
 
 /**
  * ThreadInbox is a component that displays a list of threads and allows the user to select a thread to view.
@@ -113,10 +96,8 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     [profile]
   );
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
-  const [sharedFilesOpened, { open: openSharedFiles, close: closeSharedFiles }] = useDisclosure(false);
   const [reassignOpened, { open: openReassign, close: closeReassign }] = useDisclosure(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
-  const [openedReassignedThreadIds, setOpenedReassignedThreadIds] = useState<Set<string>>(loadOpenedReassignedThreadIds);
   const [ownershipLogExpanded, setOwnershipLogExpanded] = useState(false);
 
   const currentSearch = useMemo(() => parseSearchRequest(`Communication?${query}`), [query]);
@@ -126,6 +107,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   const currentOffset = Number.parseInt(searchParams.get('_offset') || '0', 10);
   const currentPage = Math.floor(currentOffset / itemsPerPage) + 1;
   const status = (searchParams.get('status') as Communication['status']) || 'in-progress';
+  const isArchivedTab = status === 'completed';
 
   const {
     loading,
@@ -215,6 +197,10 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     (viewedProvider && getDisplayString(viewedProvider)) ||
     viewedProviderRef?.split('/').pop() ||
     'Provider';
+  const canReassignInThisView = isAdminUser && readOnlyMode && !!viewedProviderRef;
+  const reassignmentReason = selectedThread?.identifier?.find(
+    (id) => id.system === 'https://medplum.com/thread-state/reassign-reason'
+  )?.value;
   const isSelectedThreadReassigned =
     !!selectedThread?.identifier?.some(
       (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
@@ -225,7 +211,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   const [ownershipLogEntries, setOwnershipLogEntries] = useState<OwnershipLogEntry[]>([]);
 
   const handleReassign = useCallback(
-    async (providerRef: Reference<Practitioner>, displayName: string): Promise<void> => {
+    async (providerRef: Reference<Practitioner>, displayName: string, reason?: string): Promise<void> => {
       if (!selectedThread || !profile || !profileRefStr) return;
       const priorOwnerName =
         selectedThread.recipient?.[0]?.display ||
@@ -236,35 +222,31 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
         'Patient';
       const fromProviderName = getDisplayString(profile);
       const reassignmentMessage = `${fromProviderName} reassigned ${patientName}'s thread to you.`;
-      const nowIso = new Date().toISOString();
+      const nowMs = Date.now();
+      const ownershipEventIso = new Date(nowMs).toISOString();
+      const reassignmentEventIso = new Date(nowMs + 1).toISOString();
 
       await medplum.updateResource({
         ...selectedThread,
         recipient: [{ ...providerRef, display: displayName }],
-        status: 'completed',
+        status: 'in-progress',
         identifier: [
           ...(selectedThread.identifier ?? []).filter(
             (id) =>
               !(
                 (id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you') ||
                 id.system === 'https://medplum.com/thread-state/assigner-display' ||
-                id.system === 'https://medplum.com/thread-state/assigner-ref'
+                id.system === 'https://medplum.com/thread-state/assigner-ref' ||
+                id.system === 'https://medplum.com/thread-state/reassign-reason' ||
+                id.system === 'https://medplum.com/thread-state/reassigned-at'
               )
           ),
           { system: 'https://medplum.com/thread-state', value: 'reassigned-to-you' },
           { system: 'https://medplum.com/thread-state/assigner-display', value: fromProviderName },
           ...(profileRefStr ? [{ system: 'https://medplum.com/thread-state/assigner-ref', value: profileRefStr }] : []),
+          ...(reason ? [{ system: 'https://medplum.com/thread-state/reassign-reason', value: reason }] : []),
+          { system: 'https://medplum.com/thread-state/reassigned-at', value: reassignmentEventIso },
         ],
-      });
-      await medplum.createResource<Communication>({
-        resourceType: 'Communication',
-        status: 'in-progress',
-        sender: profileRefStr ? { reference: profileRefStr, display: fromProviderName } : undefined,
-        recipient: [{ reference: providerRef.reference, display: displayName }],
-        partOf: [{ reference: `Communication/${selectedThread.id}` }],
-        identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
-        payload: [{ contentString: reassignmentMessage }],
-        sent: nowIso,
       });
       await medplum.createResource<Communication>({
         resourceType: 'Communication',
@@ -278,11 +260,22 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
               priorOwner: priorOwnerName,
               newOwner: displayName,
               actor: fromProviderName,
-              timestamp: nowIso,
+              timestamp: reassignmentEventIso,
+              reason: reason ?? undefined,
             }),
           },
         ],
-        sent: nowIso,
+        sent: ownershipEventIso,
+      });
+      await medplum.createResource<Communication>({
+        resourceType: 'Communication',
+        status: 'in-progress',
+        sender: profileRefStr ? { reference: profileRefStr, display: fromProviderName } : undefined,
+        recipient: [{ reference: providerRef.reference, display: displayName }],
+        partOf: [{ reference: `Communication/${selectedThread.id}` }],
+        identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
+        payload: [{ contentString: reassignmentMessage }],
+        sent: reassignmentEventIso,
       });
       showNotification({
         color: 'green',
@@ -293,57 +286,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     },
     [selectedThread, profile, profileRefStr, medplum, refreshThreadMessages, closeReassign]
   );
-
-  useEffect(() => {
-    if (!selectedThread?.id) {
-      return;
-    }
-    const threadId = selectedThread.id;
-    const markReassignedThreadOpened = (): void => {
-      setOpenedReassignedThreadIds((prev) => {
-        if (prev.has(threadId)) {
-          return prev;
-        }
-        const next = new Set(prev).add(threadId);
-        try {
-          sessionStorage.setItem(REASSIGNED_OPENED_THREAD_IDS_STORAGE_KEY, JSON.stringify([...next]));
-        } catch {
-          // ignore storage errors
-        }
-        return next;
-      });
-    };
-
-    const hasThreadStateMarker = !!selectedThread.identifier?.some(
-      (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
-    );
-    if (hasThreadStateMarker) {
-      markReassignedThreadOpened();
-      return;
-    }
-
-    let cancelled = false;
-    const checkReassignmentEvent = async (): Promise<void> => {
-      const rows = await medplum.searchResources('Communication', {
-        'part-of': `Communication/${threadId}`,
-        _sort: '-sent',
-        _count: '200',
-      });
-      if (cancelled) {
-        return;
-      }
-      const hasReassignmentEvent = rows.some((c) =>
-        c.identifier?.some((id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you')
-      );
-      if (hasReassignmentEvent) {
-        markReassignedThreadOpened();
-      }
-    };
-    checkReassignmentEvent().catch(console.error);
-    return () => {
-      cancelled = true;
-    };
-  }, [medplum, selectedThread?.id, selectedThread?.identifier]);
 
   useEffect(() => {
     if (!selectedThread?.id) {
@@ -401,7 +343,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
             style={{ flexShrink: 0 }}
             styles={{ body: { overflow: 'visible', minHeight: 'auto' } }}
           >
-            Viewing {viewedProviderName}&apos;s inbox · Read only
+            Viewing {viewedProviderName}&apos;s inbox · Reassign only
           </Alert>
         )}
         <Flex direction="row" h="100%" w="100%">
@@ -427,17 +369,13 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       h={32}
                       radius="xl"
                     >
-                      Done
+                      Archived
                     </Button>
                   </Group>
-                  {!readOnlyMode ? (
+                  {!readOnlyMode && (
                     <ActionIcon radius="50%" variant="filled" color="blue" onClick={openModal}>
                       <IconPlus size={16} />
                     </ActionIcon>
-                  ) : (
-                    <Text fw={700} size="sm" c="dimmed">
-                      Read-only
-                    </Text>
                   )}
                 </Flex>
                 <Divider />
@@ -467,7 +405,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       getThreadUri={getThreadUri}
                       unreadThreadIds={unreadThreadIds}
                       currentProfileRefStr={readOnlyMode && viewedProviderRef ? viewedProviderRef : profileRefStr}
-                      openedReassignedThreadIds={openedReassignedThreadIds}
                     />
                   )
                 )}
@@ -507,57 +444,45 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                         {selectedThread.topic?.text ?? 'Messages'}
                       </Text>
 
-                      {!readOnlyMode && (
+                      {(canReassignInThisView || !readOnlyMode) && (
                         <Group gap="xs">
-                          <ActionIcon
-                            variant="subtle"
-                            color="gray"
-                            size="lg"
-                            aria-label="View all shared files"
-                            onClick={openSharedFiles}
-                          >
-                            <IconFolder size={20} stroke={1.5} />
-                          </ActionIcon>
                           <Menu position="bottom-end" shadow="md">
                             <Menu.Target>
                               <Button
                                 variant="light"
-                                color={getStatusColor(selectedThread.status)}
+                                color={getStatusColor(isArchivedTab ? 'completed' : selectedThread.status)}
                                 rightSection={<IconChevronDown size={16} />}
                                 radius="xl"
                                 size="sm"
                               >
-                                {getStatusLabel(selectedThread.status)}
+                                {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
                               </Button>
                             </Menu.Target>
 
                             <Menu.Dropdown>
-                              <Menu.Item
-                                onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}
-                                disabled={selectedThread.status === 'in-progress'}
-                              >
-                                Move to inbox
-                              </Menu.Item>
-                              <Menu.Item
-                                onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}
-                                disabled={selectedThread.status === 'completed'}
-                              >
-                                Mark as done
-                              </Menu.Item>
-                              {(!isReassignedAway || isAdminUser) && (
+                              {canReassignInThisView ? (
+                                <Menu.Item onClick={openReassign}>
+                                  Reassign thread
+                                </Menu.Item>
+                              ) : (
                                 <>
-                                  <Menu.Divider />
-                                  <Menu.Item onClick={openReassign}>
-                                    Reassign thread
+                                  {isArchivedTab && (
+                                    <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}>
+                                      Move to inbox
+                                    </Menu.Item>
+                                  )}
+                                  <Menu.Item
+                                    onClick={() => handleMarkThreadAsUnread()}
+                                  >
+                                    Mark as unread
                                   </Menu.Item>
+                                  {!isArchivedTab && (
+                                    <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}>
+                                      Archive
+                                    </Menu.Item>
+                                  )}
                                 </>
                               )}
-                              <Menu.Item
-                                onClick={() => handleMarkThreadAsUnread()}
-                                disabled={selectedThread.status === 'completed'}
-                              >
-                                Mark as unread
-                              </Menu.Item>
                             </Menu.Dropdown>
                           </Menu>
                         </Group>
@@ -573,7 +498,12 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                         style={{ flexShrink: 0 }}
                         styles={{ body: { overflow: 'visible', minHeight: 'auto' } }}
                       >
-                        Thread reassigned to {reassignedToName}. You can no longer reply.
+                        <Text>Thread reassigned to {reassignedToName}. You can no longer reply.</Text>
+                        {reassignmentReason && (
+                          <Text size="xs" mt={4} style={{ color: '#000000' }}>
+                            Reason: {reassignmentReason}
+                          </Text>
+                        )}
                       </Alert>
                     )}
                     {!isReassignedAway && isSelectedThreadReassignedToMe && selectedThread.status === 'in-progress' && (
@@ -585,7 +515,12 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                         style={{ flexShrink: 0 }}
                         styles={{ body: { overflow: 'visible', minHeight: 'auto' } }}
                       >
-                        {assignerName} reassigned {selectedPatientName}'s thread to you.
+                        <Text>{assignerName} reassigned {selectedPatientName}&apos;s thread to you.</Text>
+                        {reassignmentReason && (
+                          <Text size="xs" mt={4} style={{ color: '#000000' }}>
+                            Reason: {reassignmentReason}
+                          </Text>
+                        )}
                       </Alert>
                     )}
                     {isAdminUser && ownershipLogEntries.length > 0 && (
@@ -657,8 +592,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
         </Flex>
       </div>
       <NewTopicDialog subject={subject} opened={modalOpened} onClose={closeModal} onSubmit={handleNewTopicCompletion} />
-      {!readOnlyMode && <SharedFilesDialog thread={selectedThread} opened={sharedFilesOpened} onClose={closeSharedFiles} />}
-      {!readOnlyMode && (
+      {canReassignInThisView && (
         <ReassignThreadDialog
           thread={selectedThread}
           opened={reassignOpened}
@@ -690,7 +624,7 @@ function NoMessages(): JSX.Element {
 /** Returns user-facing label for thread status */
 function getStatusLabel(status: Communication['status']): string {
   if (status === 'in-progress') return 'Inbox';
-  if (status === 'completed') return 'Done';
+  if (status === 'completed') return 'Archived';
   if (status === 'stopped') return 'Stopped';
   return status?.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') ?? '';
 }
@@ -734,6 +668,7 @@ interface OwnershipLogEntry {
   newOwner: string;
   actor: string;
   timestamp: string;
+  reason?: string;
 }
 
 function formatLogTimestamp(timestamp: string): string {
@@ -752,13 +687,9 @@ function formatLogTimestamp(timestamp: string): string {
 function formatOwnershipLogEntry(entry: OwnershipLogEntry): string {
   const priorOwner = formatOwnershipActor(entry.priorOwner);
   const newOwner = formatOwnershipActor(entry.newOwner);
-  const actor = formatOwnershipActor(entry.actor);
   const formattedTimestamp = formatLogTimestamp(entry.timestamp);
   const base = `${formattedTimestamp} · ${priorOwner} → ${newOwner}`;
-  if (normalizeOwnerKey(entry.actor) === normalizeOwnerKey(entry.priorOwner)) {
-    return base;
-  }
-  return `${base} (reassigned by ${actor})`;
+  return entry.reason?.trim() ? `${base} · Reason: ${entry.reason.trim()}` : base;
 }
 
 function formatOwnershipActor(value: string): string {

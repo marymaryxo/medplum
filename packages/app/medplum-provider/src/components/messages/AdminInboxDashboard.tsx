@@ -151,7 +151,7 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
         Provider Inbox Dashboard
       </Title>
       <Text size="sm" c="dimmed" mb="md">
-        Click a provider row to open that provider&apos;s inbox in read-only mode.
+        Click a provider row to open that provider&apos;s inbox in reassign-only mode.
       </Text>
       {loading ? (
         <Loader size="sm" />

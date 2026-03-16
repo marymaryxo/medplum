@@ -7,10 +7,13 @@
 
 
 .contentContainer {
-  transition: background 0.2s;
   cursor: pointer;
   transition: all 0.2s ease;
-  border: 1px solid transparent;
+  border-top: 1px solid transparent;
+  border-right: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  border-left: 3px solid transparent;
+  padding-left: 5px;
   text-decoration: none;
   color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0));
   background-color: #ffffff;
@@ -27,26 +30,11 @@
 .contentContainer.unread {
   font-weight: 600;
   background-color: #e5f7f7;
+  border-left-color: #00b4b3;
 }
 
 .contentContainer.unread.selected {
   background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-9));
-}
-
-.contentContainer.reassignedToYou {
-  background-color: #ffffff;
-  border-left: 3px solid #00b4b3;
-  padding-left: 5px;
-}
-
-.contentContainer.reassignedToYou.unread {
-  background-color: #e5f7f7;
-}
-
-.contentContainer.reassignedToYou.selected {
-  background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-9));
-  border-left: 3px solid #00b4b3;
-  padding-left: 5px;
 }
 
 .unreadDot {
