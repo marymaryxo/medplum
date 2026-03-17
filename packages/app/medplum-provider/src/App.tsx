@@ -7,6 +7,7 @@ import {
   IconBook2,
   IconCalendarEvent,
   IconClipboardCheck,
+  IconExchange,
   IconLayoutDashboard,
   IconMail,
   IconSettingsAutomation,
@@ -51,6 +52,8 @@ import { SignInPage } from './pages/SignInPage';
 import { SpacesPage } from './pages/spaces/SpacesPage';
 import { TasksPage } from './pages/tasks/TasksPage';
 import { GetStartedPage } from './pages/getstarted/GetStartedPage';
+import { ModeSwitchPage } from './pages/ModeSwitchPage';
+import { getPortalMode } from './utils/portal-mode';
 
 export function App(): JSX.Element | null {
   const medplum = useMedplum();
@@ -70,7 +73,9 @@ export function App(): JSX.Element | null {
 
   const membership = medplum.getProjectMembership();
   const hasDoseSpot = hasDoseSpotIdentifier(membership);
-  const isAdminUser = isAdminProfile(profile);
+  const isAdminEligibleUser = isAdminProfile(profile);
+  const portalMode = getPortalMode();
+  const isAdminUser = isAdminEligibleUser && portalMode === 'admin';
 
   return (
     <AppShell
@@ -120,6 +125,15 @@ export function App(): JSX.Element | null {
               {
                 title: 'Quick Links',
                 links: [
+                  ...(isAdminEligibleUser
+                    ? [
+                        {
+                          icon: <IconExchange />,
+                          label: isAdminUser ? 'Switch to Provider Mode' : 'Switch to Admin Mode',
+                          href: isAdminUser ? '/mode/provider' : '/mode/admin',
+                        },
+                      ]
+                    : []),
                   {
                     icon: setupDismissed ? (
                       <IconSettingsAutomation />
@@ -201,6 +215,7 @@ export function App(): JSX.Element | null {
               <Route path="/onboarding" element={<IntakeFormPage />} />
               <Route path="/schedule" element={<SchedulePage />} />
               <Route path="/signin" element={<SignInPage />} />
+              <Route path="/mode/:mode" element={<ModeSwitchPage canUseAdminMode={isAdminEligibleUser} />} />
               <Route path="/dosespot" element={<DoseSpotTab />} />
               <Route path="/integrations" element={<IntegrationsPage />} />
               <Route path="/:resourceType" element={<SearchPage />} />
@@ -230,10 +245,11 @@ function isAdminProfile(
   if (!profile) {
     return false;
   }
+  const allowedEmails = new Set(['admin@example.com', 'myoo@fshealth.com']);
   const directEmail = profile.email ?? profile.username;
-  if (directEmail?.toLowerCase() === 'admin@example.com') {
+  if (directEmail && allowedEmails.has(directEmail.toLowerCase())) {
     return true;
   }
   const practitionerEmail = profile.telecom?.find((t) => t.system === 'email')?.value;
-  return practitionerEmail?.toLowerCase() === 'admin@example.com';
+  return !!practitionerEmail && allowedEmails.has(practitionerEmail.toLowerCase());
 }

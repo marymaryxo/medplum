@@ -30,18 +30,21 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
         return;
       }
 
-      const unreadCriteria = `recipient=${profileRefStr}&sender:not=${profileRefStr}&status:not=completed&part-of:missing=false&_count=500`;
+      const unreadCriteria = `recipient=${profileRefStr}&sender:not=${profileRefStr}&part-of:missing=false&_count=500`;
       const unreadBundle = await medplum.search('Communication', unreadCriteria, { cache });
       const unreadParentIds = new Set<string>();
       for (const entry of unreadBundle.entry ?? []) {
         const msg = entry.resource as Communication | undefined;
+        if (!msg || msg.received) {
+          continue;
+        }
         const parentRef = msg?.partOf?.[0]?.reference;
         if (parentRef?.startsWith('Communication/')) {
           unreadParentIds.add(parentRef.replace('Communication/', ''));
         }
       }
 
-      const localUnreadIds = loadUserMarkedUnreadThreadIds();
+      const localUnreadIds = loadUserMarkedUnreadThreadIds(profileRefStr);
       const candidateIds = new Set<string>([...unreadParentIds, ...localUnreadIds]);
       if (candidateIds.size === 0) {
         setUnreadThreadCount(0);
@@ -109,9 +112,13 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
   );
 }
 
-function loadUserMarkedUnreadThreadIds(): Set<string> {
+function getScopedStorageKey(baseKey: string, profileRefStr: string | undefined): string {
+  return profileRefStr ? `${baseKey}:${profileRefStr}` : `${baseKey}:anonymous`;
+}
+
+function loadUserMarkedUnreadThreadIds(profileRefStr?: string): Set<string> {
   try {
-    const stored = sessionStorage.getItem(USER_MARKED_UNREAD_STORAGE_KEY);
+    const stored = sessionStorage.getItem(getScopedStorageKey(USER_MARKED_UNREAD_STORAGE_KEY, profileRefStr));
     if (!stored) {
       return new Set<string>();
     }

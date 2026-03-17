@@ -54,9 +54,10 @@ function extractTopicId(entry: { response?: { location?: string }; resource?: { 
 }
 
 const REASSIGN_REASON_OPTIONS = [
-  'Provider unavailable (vacation/leave)',
-  'Provider leaving the company',
   'Member requested change',
+  'Provider leaving the company',
+  'Provider leave of absence',
+  'Provider suspended or under review',
   'Other',
 ];
 

@@ -11,6 +11,7 @@ import { useEffect, useMemo } from 'react';
 import { normalizeCommunicationSearch } from '../../utils/communication-search';
 import { AdminInboxDashboard } from '../../components/messages/AdminInboxDashboard';
 import { useMedplumProfile } from '@medplum/react';
+import { getPortalMode } from '../../utils/portal-mode';
 /**
  * Fetches
  * @returns A React component that displays all Threads/Topics.
@@ -26,7 +27,7 @@ export function MessagesPage(): JSX.Element {
   const readOnlyMode = rawSearchParams.get('readonly') === '1';
   const viewedProviderRef = rawSearchParams.get('provider') ?? undefined;
   const view = rawSearchParams.get('view');
-  const isAdminUser = useMemo(() => isAdminProfile(profile), [profile]);
+  const isAdminUser = useMemo(() => isAdminProfile(profile) && getPortalMode() === 'admin', [profile]);
   const showDashboard = isAdminUser && !readOnlyMode && !messageId && view === 'dashboard';
   const communicationSearch = useMemo(() => {
     const params = new URLSearchParams(currentSearch);
@@ -131,13 +132,14 @@ function isAdminProfile(profile: Practitioner | { email?: string; username?: str
   if (!profile) {
     return false;
   }
+  const allowedEmails = new Set(['admin@example.com', 'myoo@fshealth.com']);
   const directEmail = extractEmail(profile);
-  if (directEmail?.toLowerCase() === 'admin@example.com') {
+  if (directEmail && allowedEmails.has(directEmail.toLowerCase())) {
     return true;
   }
   const practitioner = profile as Practitioner;
   const practitionerEmail = practitioner.telecom?.find((t) => t.system === 'email')?.value;
-  return practitionerEmail?.toLowerCase() === 'admin@example.com';
+  return !!practitionerEmail && allowedEmails.has(practitionerEmail.toLowerCase());
 }
 
 function extractEmail(profile: { email?: string; username?: string }): string | undefined {

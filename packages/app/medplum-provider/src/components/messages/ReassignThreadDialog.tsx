@@ -82,6 +82,7 @@ export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Elem
             resourceType="Practitioner"
             name="practitioner"
             required={true}
+            searchCriteria={{ _count: '100' }}
             defaultValue={practitioner}
             onChange={(value) => setPractitioner(value as Practitioner | undefined)}
           />
@@ -90,10 +91,14 @@ export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Elem
           <Text fw={500}>Reason for reassignment</Text>
           <Select
             data={[
-              { value: 'Provider unavailable (vacation/leave)', label: 'Provider unavailable (vacation/leave)' },
-              { value: 'Provider leaving the company', label: 'Provider leaving the company' },
               { value: 'Member requested change', label: 'Member requested change' },
-              { value: 'other', label: 'Other' },
+              { value: 'Provider leaving the company', label: 'Provider leaving the company' },
+              { value: 'Provider leave of absence', label: 'Provider leave of absence' },
+              {
+                value: 'Provider suspended or under review',
+                label: 'Provider suspended or under review',
+              },
+              { value: 'other', label: 'Other (free text)' },
             ]}
             value={reasonOption}
             onChange={(value) => {

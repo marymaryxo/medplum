@@ -8,9 +8,13 @@ import { getDisplayString, getReferenceString } from '@medplum/core';
 const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
 const OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadIds';
 
-function loadUserMarkedUnreadFromStorage(): Set<string> {
+function getScopedStorageKey(baseKey: string, profileRefStr: string | undefined): string {
+  return profileRefStr ? `${baseKey}:${profileRefStr}` : `${baseKey}:anonymous`;
+}
+
+function loadUserMarkedUnreadFromStorage(profileRefStr?: string): Set<string> {
   try {
-    const stored = sessionStorage.getItem(USER_MARKED_UNREAD_STORAGE_KEY);
+    const stored = sessionStorage.getItem(getScopedStorageKey(USER_MARKED_UNREAD_STORAGE_KEY, profileRefStr));
     if (stored) {
       const arr = JSON.parse(stored) as string[];
       return new Set(Array.isArray(arr) ? arr : []);
@@ -21,17 +25,17 @@ function loadUserMarkedUnreadFromStorage(): Set<string> {
   return new Set();
 }
 
-function saveUserMarkedUnreadToStorage(ids: Set<string>): void {
+function saveUserMarkedUnreadToStorage(ids: Set<string>, profileRefStr?: string): void {
   try {
-    sessionStorage.setItem(USER_MARKED_UNREAD_STORAGE_KEY, JSON.stringify([...ids]));
+    sessionStorage.setItem(getScopedStorageKey(USER_MARKED_UNREAD_STORAGE_KEY, profileRefStr), JSON.stringify([...ids]));
   } catch {
     // ignore storage errors
   }
 }
 
-function loadOpenedReassignedFromStorage(): Set<string> {
+function loadOpenedReassignedFromStorage(profileRefStr?: string): Set<string> {
   try {
-    const stored = localStorage.getItem(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY);
+    const stored = localStorage.getItem(getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr));
     if (stored) {
       const arr = JSON.parse(stored) as string[];
       return new Set(Array.isArray(arr) ? arr : []);
@@ -42,9 +46,12 @@ function loadOpenedReassignedFromStorage(): Set<string> {
   return new Set();
 }
 
-function saveOpenedReassignedToStorage(ids: Set<string>): void {
+function saveOpenedReassignedToStorage(ids: Set<string>, profileRefStr?: string): void {
   try {
-    localStorage.setItem(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, JSON.stringify([...ids]));
+    localStorage.setItem(
+      getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr),
+      JSON.stringify([...ids])
+    );
   } catch {
     // ignore storage errors
   }
@@ -94,20 +101,29 @@ export function useThreadInbox({
   readOnlyMode = false,
 }: UseThreadInboxOptions): UseThreadInboxReturn {
   const medplum = useMedplum();
+  const currentProfileRefStr = recipientRefOverride ?? getReferenceString(medplum.getProfile());
   const [loading, setLoading] = useState(true);
   const [threadMessages, setThreadMessages] = useState<[Communication, Communication | undefined][]>([]);
   const [selectedThread, setSelectedThread] = useState<Communication | undefined>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const [total, setTotal] = useState<number | undefined>(undefined);
   const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
-  const [userMarkedUnreadThreadIds, setUserMarkedUnreadThreadIds] = useState<Set<string>>(loadUserMarkedUnreadFromStorage);
-  const userMarkedUnreadRef = useRef<Set<string>>(loadUserMarkedUnreadFromStorage());
+  const [userMarkedUnreadThreadIds, setUserMarkedUnreadThreadIds] = useState<Set<string>>(() =>
+    loadUserMarkedUnreadFromStorage(currentProfileRefStr)
+  );
+  const userMarkedUnreadRef = useRef<Set<string>>(loadUserMarkedUnreadFromStorage(currentProfileRefStr));
   userMarkedUnreadRef.current = userMarkedUnreadThreadIds;
+
+  useEffect(() => {
+    const next = loadUserMarkedUnreadFromStorage(currentProfileRefStr);
+    userMarkedUnreadRef.current = next;
+    setUserMarkedUnreadThreadIds(next);
+  }, [currentProfileRefStr]);
 
   // Persist userMarkedUnreadThreadIds across page navigation (e.g. Messages -> Schedule -> Messages)
   useEffect(() => {
-    saveUserMarkedUnreadToStorage(userMarkedUnreadThreadIds);
-  }, [userMarkedUnreadThreadIds]);
+    saveUserMarkedUnreadToStorage(userMarkedUnreadThreadIds, currentProfileRefStr);
+  }, [currentProfileRefStr, userMarkedUnreadThreadIds]);
 
   const fetchAllCommunications = useCallback(async (): Promise<void> => {
     const searchParams = new URLSearchParams(query);
@@ -250,7 +266,7 @@ export function useThreadInbox({
         })
       : threadsWithReplies;
 
-    const openedReassignedThreadIds = readOnlyMode ? new Set<string>() : loadOpenedReassignedFromStorage();
+    const openedReassignedThreadIds = readOnlyMode ? new Set<string>() : loadOpenedReassignedFromStorage(effectiveProfileRefStr);
     const sortedThreads = [...filteredThreads].sort((a, b) => {
       const aReassignedPriority =
         requestedStatus === 'in-progress' &&
@@ -283,13 +299,15 @@ export function useThreadInbox({
       const unreadParams = new URLSearchParams();
       unreadParams.append('recipient', recipientForQuery);
       unreadParams.append('sender:not', recipientForQuery);
-      unreadParams.append('status:not', 'completed');
       unreadParams.append('part-of:missing', 'false');
       unreadParams.append('_count', '500');
       const unreadBundle = await medplum.search('Communication', unreadParams.toString(), { cache: 'no-cache' });
       const ids = new Set<string>();
       for (const entry of unreadBundle.entry ?? []) {
         const c = entry.resource as Communication | undefined;
+        if (!c || c.received) {
+          continue;
+        }
         const partOf = c?.partOf?.[0]?.reference;
         if (partOf?.startsWith('Communication/')) {
           ids.add(partOf.replace('Communication/', ''));
@@ -348,7 +366,6 @@ export function useThreadInbox({
     if (!shouldHandleOpenAsRead) {
       return;
     }
-    const currentProfileRefStr = recipientRefOverride ?? getReferenceString(medplum.getProfile());
     const prevId = prevThreadIdRef.current;
     prevThreadIdRef.current = threadId;
     if (threadId && prevId !== threadId) {
@@ -356,11 +373,15 @@ export function useThreadInbox({
       if (
         !readOnlyMode &&
         openedThread &&
-        isUnopenedReassignedArrivalThread(openedThread, currentProfileRefStr, loadOpenedReassignedFromStorage())
+        isUnopenedReassignedArrivalThread(
+          openedThread,
+          currentProfileRefStr,
+          loadOpenedReassignedFromStorage(currentProfileRefStr)
+        )
       ) {
-        const opened = loadOpenedReassignedFromStorage();
+        const opened = loadOpenedReassignedFromStorage(currentProfileRefStr);
         opened.add(threadId);
-        saveOpenedReassignedToStorage(opened);
+        saveOpenedReassignedToStorage(opened, currentProfileRefStr);
       }
       // User is opening this thread - remove so it will become read when they view
       if (!readOnlyMode) {
@@ -446,18 +467,16 @@ export function useThreadInbox({
     const searchParams = new URLSearchParams();
     searchParams.append('part-of', `Communication/${selectedThread.id}`);
     searchParams.append('recipient', profileRefStr);
-    searchParams.append('status:not', 'completed');
     const bundle = await medplum.search('Communication', searchParams.toString(), { cache: 'no-cache' });
     const unread = (bundle.entry ?? [])
       .map((e) => e.resource as Communication)
-      .filter((c): c is Communication => !!c?.id);
+      .filter((c): c is Communication => !!c?.id && !c.received);
     const now = new Date().toISOString();
     await Promise.all(
       unread.map((c) =>
         medplum.updateResource({
           ...c,
           received: c.received ?? now,
-          status: 'completed',
         })
       )
     );
@@ -471,9 +490,6 @@ export function useThreadInbox({
 
   const handleMarkThreadAsUnread = async (): Promise<void> => {
     if (!selectedThread?.id) return;
-    const profile = medplum.getProfile();
-    const profileRefStr = profile ? getReferenceString(profile) : undefined;
-    if (!profileRefStr) return;
     // Optimistic update: show unread styling immediately
     const threadIdToMark = selectedThread.id!;
     setUnreadThreadIds((prev) => new Set(prev).add(threadIdToMark));
@@ -482,23 +498,6 @@ export function useThreadInbox({
       userMarkedUnreadRef.current = next; // Update ref immediately so fetchAllCommunications sees it
       return next;
     });
-    const searchParams = new URLSearchParams();
-    searchParams.append('part-of', `Communication/${selectedThread.id}`);
-    searchParams.append('recipient', profileRefStr);
-    searchParams.append('status', 'completed');
-    const bundle = await medplum.search('Communication', searchParams.toString(), { cache: 'no-cache' });
-    const read = (bundle.entry ?? [])
-      .map((e) => e.resource as Communication)
-      .filter((c): c is Communication => !!c?.id);
-    await Promise.all(
-      read.map((c) =>
-        medplum.updateResource({
-          ...c,
-          status: 'in-progress',
-        })
-      )
-    );
-    await fetchAllCommunications();
   };
 
   return {

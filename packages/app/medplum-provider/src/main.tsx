@@ -15,7 +15,8 @@ import { App } from './App';
 
 const medplum = new MedplumClient({
   onUnauthenticated: () => (window.location.href = '/'),
-  baseUrl: 'http://localhost:8103/', // Uncomment this to run against the server on your localhost
+  baseUrl: 'https://api.medplum.com',
+  clientId: '9a24ff62-4633-4495-8d25-7f026c8c3472',
   cacheTime: 60000,
   autoBatchTime: 100,
 });

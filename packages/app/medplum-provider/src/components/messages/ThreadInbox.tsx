@@ -43,6 +43,7 @@ import { showErrorNotification } from '../../utils/notifications';
 import { showNotification } from '@mantine/notifications';
 import cx from 'clsx';
 import { Link } from 'react-router';
+import { getPortalMode } from '../../utils/portal-mode';
 
 /**
  * ThreadInbox is a component that displays a list of threads and allows the user to select a thread to view.
@@ -92,7 +93,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     () =>
       isAdminProfile(
         profile as { email?: string; username?: string; telecom?: { system?: string; value?: string }[] } | undefined
-      ),
+      ) && getPortalMode() === 'admin',
     [profile]
   );
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
@@ -717,12 +718,6 @@ function getUuidCandidate(value: string): string | undefined {
   return undefined;
 }
 
-function normalizeOwnerKey(value: string): string {
-  const trimmed = value?.trim() ?? '';
-  const uuid = getUuidCandidate(trimmed);
-  return (uuid ?? trimmed).toLowerCase();
-}
-
 function generateProviderAlias(seed: string): string {
   const firstNames = ['Avery', 'Jordan', 'Casey', 'Taylor', 'Riley', 'Morgan', 'Jamie', 'Alex'];
   const lastNames = ['Johnson', 'Lee', 'Patel', 'Rivera', 'Nguyen', 'Smith', 'Brown', 'Garcia'];
@@ -741,10 +736,11 @@ function isAdminProfile(
   if (!profile) {
     return false;
   }
+  const allowedEmails = new Set(['admin@example.com', 'myoo@fshealth.com']);
   const directEmail = profile.email ?? profile.username;
-  if (directEmail?.toLowerCase() === 'admin@example.com') {
+  if (directEmail && allowedEmails.has(directEmail.toLowerCase())) {
     return true;
   }
   const practitionerEmail = profile.telecom?.find((t) => t.system === 'email')?.value;
-  return practitionerEmail?.toLowerCase() === 'admin@example.com';
+  return !!practitionerEmail && allowedEmails.has(practitionerEmail.toLowerCase());
 }

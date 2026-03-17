@@ -187,10 +187,9 @@ async function searchAllCommunications(
 ): Promise<Communication[]> {
   const count = 500;
   let offset = 0;
-  let total: number | undefined;
   const results: Communication[] = [];
 
-  while (total === undefined || offset < total) {
+  while (true) {
     const pageParams = new URLSearchParams({
       ...params,
       _count: String(count),
@@ -203,11 +202,16 @@ async function searchAllCommunications(
         .filter((r): r is Communication => !!r) ?? [];
     results.push(...pageRows);
 
-    total = bundle.total ?? pageRows.length;
     if (pageRows.length === 0) {
       break;
     }
     offset += pageRows.length;
+    if (bundle.total !== undefined && offset >= bundle.total) {
+      break;
+    }
+    if (pageRows.length < count) {
+      break;
+    }
   }
 
   return results;

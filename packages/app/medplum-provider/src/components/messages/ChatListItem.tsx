@@ -73,7 +73,7 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
   );
   const isJsonLikeMessage = !!trimmedMsg && /^\s*\{[\s\S]*\}\s*$/.test(trimmedMsg);
   const safePreview = isOwnershipChangeEvent || isJsonLikeMessage ? 'Thread reassigned' : trimmedMsg;
-  const content = safePreview ? `${senderName} ${safePreview}` : `No messages available`;
+  const content = safePreview ? `${senderName}${safePreview}` : `No messages available`;
 
   return (
     <MedplumLink to={getThreadUri(topic)} underline="never">
