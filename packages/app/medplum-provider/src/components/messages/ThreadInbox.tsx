@@ -28,6 +28,7 @@ import type { JSX } from 'react';
 import {
   IconMessageCircle,
   IconChevronDown,
+  IconFolder,
   IconPlus,
 } from '@tabler/icons-react';
 import { getDisplayString, getReferenceString, parseSearchRequest } from '@medplum/core';
@@ -36,6 +37,7 @@ import type { SearchRequest } from '@medplum/core';
 import { ChatList } from './ChatList';
 import { NewTopicDialog } from './NewTopicDialog';
 import { ReassignThreadDialog } from './ReassignThreadDialog';
+import { SharedFilesDialog } from './SharedFilesDialog';
 import { useThreadInbox } from '../../hooks/useThreadInbox';
 import classes from './ThreadInbox.module.css';
 import { useDisclosure } from '@mantine/hooks';
@@ -98,6 +100,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   );
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
   const [reassignOpened, { open: openReassign, close: closeReassign }] = useDisclosure(false);
+  const [sharedFilesOpened, { open: openSharedFiles, close: closeSharedFiles }] = useDisclosure(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [ownershipLogExpanded, setOwnershipLogExpanded] = useState(false);
 
@@ -448,6 +451,15 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
 
                       {(canReassignInThisView || !readOnlyMode) && (
                         <Group gap="xs">
+                          <ActionIcon
+                            variant="light"
+                            radius="xl"
+                            size="lg"
+                            onClick={openSharedFiles}
+                            aria-label="Open shared files"
+                          >
+                            <IconFolder size={16} />
+                          </ActionIcon>
                           <Menu position="bottom-end" shadow="md">
                             <Menu.Target>
                               <Button
@@ -602,6 +614,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
           onReassign={handleReassign}
         />
       )}
+      <SharedFilesDialog thread={selectedThread} opened={sharedFilesOpened} onClose={closeSharedFiles} />
     </>
   );
 }

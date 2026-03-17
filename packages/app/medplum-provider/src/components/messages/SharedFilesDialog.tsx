@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import { Anchor, Divider, Group, Modal, ScrollArea, Stack, Text } from '@mantine/core';
+import { ActionIcon, Group, Modal, ScrollArea, Stack, Table, Tabs, Text, TextInput } from '@mantine/core';
 import type { Attachment, Communication } from '@medplum/fhirtypes';
-import { useCachedBinaryUrl, useMedplum, useResource } from '@medplum/react';
+import { useCachedBinaryUrl, useMedplum } from '@medplum/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { getDisplayString } from '@medplum/core';
+import { IconDownload, IconFileText, IconPhoto, IconSearch } from '@tabler/icons-react';
 
 const FILENAME_TRUNCATE_LENGTH = 35;
+const CELL_ALIGN_STYLE = { verticalAlign: 'middle' as const };
 
 /** Extract file attachments from payload; excludes text/html contentAttachment (message body) */
 function extractAttachmentsFromPayload(payload: Communication['payload']): Attachment[] {
@@ -59,69 +60,95 @@ function truncateFilename(name: string, maxLen: number): string {
 
 function formatDate(sent: string): string {
   const d = new Date(sent);
-  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  if (Number.isNaN(d.getTime())) {
+    return 'Unknown date';
+  }
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function formatTime(sent: string): string {
-  const d = new Date(sent);
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-}
+type FileCategory = 'all' | 'images' | 'documents';
 
 interface AttachmentWithMeta {
+  id: string;
   attachment: Attachment;
   sent: string;
-  senderRef: string;
+  senderRef?: string;
+  senderDisplay?: string;
 }
 
-function FileRow(props: { item: AttachmentWithMeta }): JSX.Element {
+function isImageAttachment(attachment: Attachment): boolean {
+  return attachment.contentType?.toLowerCase().startsWith('image/') ?? false;
+}
+
+function getDownloadUrl(rawUrl: string | undefined, baseUrl: string): string | undefined {
+  if (!rawUrl) {
+    return undefined;
+  }
+  if (rawUrl.startsWith('http')) {
+    return rawUrl;
+  }
+  return `${baseUrl}fhir/R4/${rawUrl.replace(/^\//, '')}`;
+}
+
+function getSenderName(item: AttachmentWithMeta): string {
+  if (item.senderDisplay?.trim()) {
+    return item.senderDisplay.trim();
+  }
+  if (item.senderRef) {
+    return item.senderRef.split('/').pop() ?? item.senderRef;
+  }
+  return 'Unknown';
+}
+
+function FileTypeIcon(props: { attachment: Attachment }): JSX.Element {
+  const { attachment } = props;
+  return isImageAttachment(attachment) ? <IconPhoto size={16} /> : <IconFileText size={16} />;
+}
+
+function FileRow(props: { item: AttachmentWithMeta; medplumBaseUrl: string }): JSX.Element {
   const { item } = props;
   const resolvedUrl = useCachedBinaryUrl(item.attachment.url);
-  const medplum = useMedplum();
-  const rawUrl = resolvedUrl ?? item.attachment.url;
-  const href = rawUrl
-    ? rawUrl.startsWith('http')
-      ? rawUrl
-      : `${medplum.getBaseUrl()}fhir/R4/${rawUrl.replace(/^\//, '')}`
-    : undefined;
+  const href = getDownloadUrl(resolvedUrl ?? item.attachment.url, props.medplumBaseUrl);
   const displayName = getAttachmentDisplayName(item.attachment);
   const truncated = truncateFilename(displayName, FILENAME_TRUNCATE_LENGTH);
-  const senderResource = useResource(item.senderRef ? { reference: item.senderRef } : undefined);
-  const senderName = senderResource ? getDisplayString(senderResource) : item.senderRef?.split('/')[1] ?? 'Unknown';
-
-  if (!href) {
-    return (
-      <Group gap="sm" wrap="nowrap">
-        <Text size="sm" truncate maw={180} title={displayName}>
-          {truncated}
-        </Text>
-        <Text size="xs" c="dimmed">
-          {senderName} · {formatTime(item.sent)}
-        </Text>
-      </Group>
-    );
-  }
+  const senderName = getSenderName(item);
 
   return (
-    <Group gap="sm" wrap="nowrap">
-      <Anchor
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        size="sm"
-        fw={500}
-        c="blue"
-        underline="always"
-        style={{ textUnderlineOffset: 2 }}
-        truncate
-        maw={180}
-        title={displayName}
-      >
-        {truncated}
-      </Anchor>
-      <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
-        {senderName} · {formatTime(item.sent)}
-      </Text>
-    </Group>
+    <Table.Tr>
+      <Table.Td style={{ ...CELL_ALIGN_STYLE, width: 44, textAlign: 'center' }}>
+        <Group justify="center" wrap="nowrap">
+          <FileTypeIcon attachment={item.attachment} />
+        </Group>
+      </Table.Td>
+      <Table.Td style={CELL_ALIGN_STYLE}>
+        <Text size="sm" truncate="end" title={displayName}>
+          {truncated}
+        </Text>
+      </Table.Td>
+      <Table.Td style={{ ...CELL_ALIGN_STYLE, width: 140 }}>
+        <Text size="sm">{formatDate(item.sent)}</Text>
+      </Table.Td>
+      <Table.Td style={{ ...CELL_ALIGN_STYLE, width: 180 }}>
+        <Text size="sm" truncate="end">
+          {senderName}
+        </Text>
+      </Table.Td>
+      <Table.Td style={{ ...CELL_ALIGN_STYLE, width: 60, textAlign: 'center' }}>
+        <Group justify="center" wrap="nowrap">
+          <ActionIcon
+            component="a"
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="subtle"
+            aria-label={href ? `Download ${displayName}` : `No download available for ${displayName}`}
+            disabled={!href}
+          >
+            <IconDownload size={16} />
+          </ActionIcon>
+        </Group>
+      </Table.Td>
+    </Table.Tr>
   );
 }
 
@@ -136,87 +163,175 @@ export function SharedFilesDialog(props: SharedFilesDialogProps): JSX.Element {
   const medplum = useMedplum();
   const [items, setItems] = useState<AttachmentWithMeta[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [fileTypeFilter, setFileTypeFilter] = useState<FileCategory>('all');
+
+  const fetchAllCommunications = useCallback(
+    async (params: Record<string, string>): Promise<Communication[]> => {
+      const count = 500;
+      let offset = 0;
+      const results: Communication[] = [];
+      while (true) {
+        const query = new URLSearchParams({ ...params, _count: String(count), _offset: String(offset) });
+        const bundle = await medplum.search('Communication', query.toString(), { cache: 'no-cache' });
+        const rows =
+          bundle.entry
+            ?.map((entry) => entry.resource as Communication | undefined)
+            .filter((r): r is Communication => !!r) ?? [];
+        results.push(...rows);
+        if (rows.length === 0) {
+          break;
+        }
+        offset += rows.length;
+        if (bundle.total !== undefined && offset >= bundle.total) {
+          break;
+        }
+        if (rows.length < count) {
+          break;
+        }
+      }
+      return results;
+    },
+    [medplum]
+  );
 
   const fetchAttachments = useCallback(async (): Promise<void> => {
     if (!thread?.id) return;
     setLoading(true);
     try {
-      const bundle = await medplum.search(
-        'Communication',
-        `part-of=Communication/${thread.id}`,
-        { cache: 'no-cache' }
+      const subjectRef = thread.subject?.reference;
+      const parentThreads = subjectRef
+        ? await fetchAllCommunications({
+            'part-of:missing': 'true',
+            subject: subjectRef,
+          })
+        : [thread];
+      const threadIds = parentThreads.map((t) => t.id).filter((id): id is string => !!id);
+      const childBatches = await Promise.all(
+        threadIds.map((id) =>
+          fetchAllCommunications({
+            'part-of': `Communication/${id}`,
+          })
+        )
       );
-      const comms = (bundle.entry ?? [])
-        .map((e) => e.resource as Communication)
-        .filter((c): c is Communication => !!c?.id);
+      const comms = childBatches.flat();
       const all: AttachmentWithMeta[] = [];
       for (const c of comms) {
         const atts = extractAttachmentsFromPayload(c.payload);
-        const senderRef = c.sender?.reference ?? '';
+        const senderRef = c.sender?.reference;
+        const senderDisplay = c.sender?.display;
         const sent = c.sent ?? '';
         for (const att of atts) {
-          all.push({ attachment: att, sent, senderRef });
+          all.push({
+            id: `${c.id ?? 'unknown'}:${att.url ?? att.title ?? sent}:${all.length}`,
+            attachment: att,
+            sent,
+            senderRef,
+            senderDisplay,
+          });
         }
       }
       all.sort((a, b) => b.sent.localeCompare(a.sent));
       setItems(all);
+    } catch (err) {
+      console.error(err);
+      setItems([]);
     } finally {
       setLoading(false);
     }
-  }, [medplum, thread?.id]);
+  }, [fetchAllCommunications, thread]);
 
   useEffect(() => {
     if (opened && thread?.id) {
+      setSearchTerm('');
+      setFileTypeFilter('all');
       void fetchAttachments();
     }
   }, [opened, thread?.id, fetchAttachments]);
 
-  const byDate = useMemo(() => {
-    const map = new Map<string, AttachmentWithMeta[]>();
-    for (const item of items) {
-      const dateKey = formatDate(item.sent);
-      const list = map.get(dateKey) ?? [];
-      list.push(item);
-      map.set(dateKey, list);
-    }
-    for (const list of map.values()) {
-      list.sort((a, b) => a.sent.localeCompare(b.sent));
-    }
-    return Array.from(map.entries()).sort(([, listA], [, listB]) => {
-      const sentA = listA[listA.length - 1]?.sent ?? '';
-      const sentB = listB[listB.length - 1]?.sent ?? '';
-      return sentB.localeCompare(sentA);
+  const filteredItems = useMemo(() => {
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    return items.filter((item) => {
+      const name = getAttachmentDisplayName(item.attachment).toLowerCase();
+      if (normalizedSearch && !name.includes(normalizedSearch)) {
+        return false;
+      }
+      if (fileTypeFilter === 'images' && !isImageAttachment(item.attachment)) {
+        return false;
+      }
+      if (fileTypeFilter === 'documents' && isImageAttachment(item.attachment)) {
+        return false;
+      }
+      return true;
     });
+  }, [fileTypeFilter, items, searchTerm]);
+
+  const counts = useMemo(() => {
+    let images = 0;
+    let documents = 0;
+    for (const item of items) {
+      if (isImageAttachment(item.attachment)) {
+        images++;
+      } else {
+        documents++;
+      }
+    }
+    return { all: items.length, images, documents };
   }, [items]);
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Shared files" size="md">
+    <Modal opened={opened} onClose={onClose} title="Shared files" size="xl">
       {loading ? (
         <Text size="sm" c="dimmed">
           Loading...
         </Text>
-      ) : items.length === 0 ? (
-        <Text size="sm" c="dimmed">
-          No shared files in this thread
-        </Text>
       ) : (
-        <ScrollArea h={400}>
-          <Stack gap="md">
-            {byDate.map(([dateStr, dateItems]) => (
-              <Stack key={dateStr} gap="xs">
-                <Text fw={600} size="sm" c="dimmed">
-                  {dateStr}
+        <Stack gap="sm">
+          <TextInput
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.currentTarget.value)}
+            placeholder="Search files by filename"
+            leftSection={<IconSearch size={16} />}
+          />
+          <Tabs value={fileTypeFilter} onChange={(value) => setFileTypeFilter((value as FileCategory) ?? 'all')}>
+            <Tabs.List>
+              <Tabs.Tab value="all">All ({counts.all})</Tabs.Tab>
+              <Tabs.Tab value="images">Images ({counts.images})</Tabs.Tab>
+              <Tabs.Tab value="documents">Documents ({counts.documents})</Tabs.Tab>
+            </Tabs.List>
+          </Tabs>
+          {filteredItems.length === 0 ? (
+            <Text size="sm" c="dimmed">
+              No shared files found
+            </Text>
+          ) : (
+            <>
+              <ScrollArea h={420}>
+                <Table striped highlightOnHover withTableBorder style={{ tableLayout: 'fixed' }}>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 44, textAlign: 'center' }}>Type</Table.Th>
+                      <Table.Th style={CELL_ALIGN_STYLE}>Filename</Table.Th>
+                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 140 }}>Date Shared</Table.Th>
+                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 180 }}>Sent By</Table.Th>
+                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 60 }} />
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {filteredItems.map((item) => (
+                      <FileRow key={item.id} item={item} medplumBaseUrl={medplum.getBaseUrl()} />
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </ScrollArea>
+              <Group justify="space-between">
+                <Text size="xs" c="dimmed">
+                  Showing {filteredItems.length} of {items.length} files
                 </Text>
-                <Stack gap={4} pl="sm">
-                  {dateItems.map((item, i) => (
-                    <FileRow key={i} item={item} />
-                  ))}
-                </Stack>
-                <Divider />
-              </Stack>
-            ))}
-          </Stack>
-        </ScrollArea>
+              </Group>
+            </>
+          )}
+        </Stack>
       )}
     </Modal>
   );

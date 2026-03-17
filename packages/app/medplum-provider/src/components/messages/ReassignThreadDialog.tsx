@@ -98,7 +98,7 @@ export function ReassignThreadDialog(props: ReassignThreadDialogProps): JSX.Elem
                 value: 'Provider suspended or under review',
                 label: 'Provider suspended or under review',
               },
-              { value: 'other', label: 'Other (free text)' },
+              { value: 'other', label: 'Other' },
             ]}
             value={reasonOption}
             onChange={(value) => {

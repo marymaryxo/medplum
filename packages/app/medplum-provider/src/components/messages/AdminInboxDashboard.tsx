@@ -89,7 +89,23 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
         if (adminProfileRef) {
           providerRefs.add(adminProfileRef);
         }
-        const providerNameMap = await loadProviderNames(medplum, providerRefs);
+        const providerNameMap = new Map<string, string>();
+        const practitioners = await searchAllPractitioners(medplum);
+        for (const practitioner of practitioners) {
+          const practitionerRef = normalizeRef(getReferenceString(practitioner));
+          if (!practitionerRef) {
+            continue;
+          }
+          providerRefs.add(practitionerRef);
+          providerNameMap.set(practitionerRef, getDisplayString(practitioner));
+        }
+        const unresolvedProviderRefs = new Set<string>([...providerRefs].filter((ref) => !providerNameMap.has(ref)));
+        if (unresolvedProviderRefs.size > 0) {
+          const loadedProviderNames = await loadProviderNames(medplum, unresolvedProviderRefs);
+          for (const [ref, name] of loadedProviderNames) {
+            providerNameMap.set(ref, name);
+          }
+        }
         const nextRows = [...providerRefs]
           .map((providerRef) => ({
             providerRef,
@@ -202,6 +218,38 @@ async function searchAllCommunications(
         .filter((r): r is Communication => !!r) ?? [];
     results.push(...pageRows);
 
+    if (pageRows.length === 0) {
+      break;
+    }
+    offset += pageRows.length;
+    if (bundle.total !== undefined && offset >= bundle.total) {
+      break;
+    }
+    if (pageRows.length < count) {
+      break;
+    }
+  }
+
+  return results;
+}
+
+async function searchAllPractitioners(medplum: ReturnType<typeof useMedplum>): Promise<Practitioner[]> {
+  const count = 200;
+  let offset = 0;
+  const results: Practitioner[] = [];
+
+  while (true) {
+    const params = new URLSearchParams({
+      _count: String(count),
+      _offset: String(offset),
+      _sort: '-_lastUpdated',
+    });
+    const bundle = await medplum.search('Practitioner', params.toString(), { cache: 'no-cache' });
+    const pageRows =
+      bundle.entry
+        ?.map((entry) => entry.resource as Practitioner | undefined)
+        .filter((r): r is Practitioner => !!r) ?? [];
+    results.push(...pageRows);
     if (pageRows.length === 0) {
       break;
     }

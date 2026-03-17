@@ -767,6 +767,6 @@ describe('BaseChat', () => {
     expect(links.length).toBeGreaterThanOrEqual(2);
     const hrefs = links.map((a) => a.getAttribute('href'));
     expect(hrefs).toContain('https://www.google.com');
-    expect(hrefs.some((h) => h?.endsWith('www.example.com') || h === 'https://www.example.com')).toBe(true);
+    expect(hrefs).toContain('https://www.example.com');
   });
 });

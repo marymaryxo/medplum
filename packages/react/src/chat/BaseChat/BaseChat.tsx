@@ -76,20 +76,30 @@ function escapeHtmlAttr(s: string): string {
     .replace(/>/g, '&gt;');
 }
 
-/** URL regex: match http/https URLs, optionally strip trailing punctuation */
-const URL_REGEX = /(https?:\/\/[^\s<>"']+?)(?=[\s.,;:!?)\]'"<>]|$)/g;
-const WWW_REGEX = /(^|[\s>])(www\.[^\s<>"']+?)(?=[\s.,;:!?)\]'"<>]|$)/g;
+/** URL regexes for http(s) and www-prefixed domains */
+const URL_REGEX = /(https?:\/\/[^\s<>"']+)/g;
+const WWW_REGEX = /(^|[\s>])(www\.[^\s<>"']+)/g;
+
+/** Split trailing punctuation from a matched URL so dots in domains are preserved. */
+function splitTrailingPunctuation(url: string): { core: string; trailing: string } {
+  const trimmed = url.match(/^(.*?)([.,;:!?)\]'"`]+)?$/);
+  const core = trimmed?.[1] ?? url;
+  const trailing = trimmed?.[2] ?? '';
+  return { core, trailing };
+}
 
 /** Convert bare URLs in text to clickable links. Used for both plain text and HTML. */
 function convertUrlsToLinks(text: string): string {
   if (!text) return '';
   let out = text;
-  out = out.replace(URL_REGEX, (url) =>
-    `<a href="${escapeHtmlAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtmlAttr(url)}</a>`
-  );
-  out = out.replace(WWW_REGEX, (_, before, url) =>
-    `${before}<a href="${escapeHtmlAttr('https://' + url)}" target="_blank" rel="noopener noreferrer">${escapeHtmlAttr(url)}</a>`
-  );
+  out = out.replace(URL_REGEX, (url) => {
+    const { core, trailing } = splitTrailingPunctuation(url);
+    return `<a href="${escapeHtmlAttr(core)}" target="_blank" rel="noopener noreferrer">${escapeHtmlAttr(core)}</a>${escapeHtmlAttr(trailing)}`;
+  });
+  out = out.replace(WWW_REGEX, (_, before, url) => {
+    const { core, trailing } = splitTrailingPunctuation(url);
+    return `${before}<a href="${escapeHtmlAttr('https://' + core)}" target="_blank" rel="noopener noreferrer">${escapeHtmlAttr(core)}</a>${escapeHtmlAttr(trailing)}`;
+  });
   return out;
 }
 
