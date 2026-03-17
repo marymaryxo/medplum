@@ -39,6 +39,8 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
         const inboxThreads = await searchAllCommunications(medplum, {
           'part-of:missing': 'true',
           status: 'in-progress',
+          'identifier:not': 'ai-message-topic',
+          '_has:Communication:part-of:_id:not': 'null',
         });
         const unreadMessages = await searchAllCommunications(medplum, {
           'part-of:missing': 'false',

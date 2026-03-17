@@ -883,7 +883,6 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                       type="button"
                       size={44}
                       radius="xl"
-                      color="blue"
                       variant="filled"
                       aria-label="Send message"
                       onClick={performSend}

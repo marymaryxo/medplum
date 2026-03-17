@@ -464,7 +464,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
       <div className={classes.container}>
         {readOnlyMode && (
           <Alert
-            color="blue"
+            color="fshTeal"
             variant="light"
             m="md"
             mb={0}
@@ -485,7 +485,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
             <Paper h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
               <ScrollArea style={{ flex: 1 }} scrollbarSize={10} type="hover" scrollHideDelay={250}>
                 <Flex h={64} align="center" justify="space-between" p="md">
-                  <Group gap="xs">
+                  <Group gap="xs" wrap="nowrap" align="center">
                     <Button
                       component={Link}
                       to={inProgressUri}
@@ -505,17 +505,20 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       Archived
                     </Button>
                   </Group>
-                  <Group gap="xs">
+                  <Group gap="xs" wrap="nowrap" align="center">
                     {canBulkSelect && (
                       <Button
                         variant={selectionMode ? 'filled' : 'light'}
+                        size="sm"
+                        h={32}
+                        radius="xl"
                         onClick={handleToggleSelectionMode}
                       >
                         {selectionMode ? 'Done selecting' : 'Select threads'}
                       </Button>
                     )}
                     {!readOnlyMode && (
-                      <ActionIcon radius="50%" variant="filled" color="blue" onClick={openModal}>
+                      <ActionIcon className={classes.newThreadButton} variant="filled" onClick={openModal}>
                         <IconPlus size={16} />
                       </ActionIcon>
                     )}
@@ -572,7 +575,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                     <Text size="sm" fw={600}>
                       {selectedThreadCount} selected
                     </Text>
-                    <Button size="xs" onClick={openBulkReassign}>
+                    <Button size="sm" h={32} radius="xl" onClick={openBulkReassign}>
                       Reassign selected
                     </Button>
                   </Group>
@@ -637,7 +640,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                                   size="sm"
                                   h={32}
                                   radius="xl"
-                                  color={getStatusColor(isArchivedTab ? 'completed' : selectedThread.status)}
+                                  className={classes.headerStatusButton}
                                   rightSection={<IconChevronDown size={16} />}
                                 >
                                   {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
@@ -675,16 +678,25 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       </Flex>
 
                       {isMobile && (canReassignInThisView || !readOnlyMode) && (
-                        <Group gap="xs" grow wrap="nowrap">
-                          <Button variant="light" size="xs" leftSection={<IconFolder size={14} />} onClick={openSharedFiles}>
+                        <Group gap="xs" grow wrap="nowrap" align="center">
+                          <Button
+                            variant="light"
+                            size="sm"
+                            h={32}
+                            radius="xl"
+                            leftSection={<IconFolder size={14} />}
+                            onClick={openSharedFiles}
+                          >
                             Shared files
                           </Button>
                           <Menu position="bottom-end" shadow="md">
                             <Menu.Target>
                               <Button
                                 variant="light"
-                                size="xs"
-                                color={getStatusColor(isArchivedTab ? 'completed' : selectedThread.status)}
+                                size="sm"
+                                h={32}
+                                radius="xl"
+                                className={classes.headerStatusButton}
                                 rightSection={<IconChevronDown size={14} />}
                               >
                                 {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
@@ -722,7 +734,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                     <Divider />
                     {isReassignedAway && (
                       <Alert
-                        color="blue"
                         variant="light"
                         m="md"
                         mb={0}
@@ -739,7 +750,6 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                     )}
                     {!isReassignedAway && isSelectedThreadReassignedToMe && selectedThread.status === 'in-progress' && (
                       <Alert
-                        color="blue"
                         variant="light"
                         m="md"
                         mb={0}
@@ -868,16 +878,6 @@ function getStatusLabel(status: Communication['status']): string {
   if (status === 'completed') return 'Archived';
   if (status === 'stopped') return 'Stopped';
   return status?.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') ?? '';
-}
-
-function getStatusColor(status: Communication['status']): string {
-  if (status === 'completed') {
-    return 'green';
-  }
-  if (status === 'stopped') {
-    return 'red';
-  }
-  return 'blue';
 }
 
 function EmptyMessagesState(): JSX.Element {

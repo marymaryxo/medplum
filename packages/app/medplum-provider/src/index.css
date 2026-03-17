@@ -61,3 +61,20 @@ div[data-chat-sender='patient'] {
   background: #E5F7F7 !important;
 }
 
+/* Use FSH teal for input focus ring/outline states. */
+.mantine-Input-input:focus,
+.mantine-Input-input:focus-within,
+.mantine-Textarea-input:focus,
+.mantine-Textarea-input:focus-within,
+.mantine-Select-input:focus,
+.mantine-Select-input:focus-within,
+.mantine-MultiSelect-input:focus,
+.mantine-MultiSelect-input:focus-within,
+.mantine-Combobox-search:focus,
+.mantine-Combobox-search:focus-within,
+.mantine-PillsInput-input:focus,
+.mantine-PillsInput-input:focus-within {
+  border-color: #00b4b3 !important;
+  box-shadow: 0 0 0 1px #00b4b3 !important;
+}
+

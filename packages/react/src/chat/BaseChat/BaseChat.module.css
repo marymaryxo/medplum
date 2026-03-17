@@ -6,7 +6,7 @@
 }
 
 .chatTitle {
-  background-color: light-dark(var(--mantine-color-blue-7), var(--mantine-color-blue-8));
+  background-color: #003848;
   color: light-dark(var(--mantine-color-white), var(--mantine-color-gray-3));
   font-size: var(--mantine-font-size-sm);
   font-weight: 500;
@@ -86,7 +86,7 @@
 }
 
 .chatBubbleContent a {
-  color: var(--mantine-color-blue-6);
+  color: #00b4b3;
   text-decoration: underline;
   cursor: pointer;
 }

@@ -22,6 +22,12 @@ const medplum = new MedplumClient({
 });
 
 const theme = createTheme({
+  colors: {
+    fshNavy: ['#e6edee', '#ccdadd', '#9ab5bb', '#679099', '#356b77', '#1a5563', '#003848', '#002f3f', '#002635', '#001c2c'],
+    fshTeal: ['#e6f8f8', '#ccf0f0', '#99e1e1', '#66d2d2', '#33c3c3', '#14bbbb', '#00b4b3', '#00908f', '#006c6b', '#004847'],
+  },
+  primaryColor: 'fshNavy',
+  primaryShade: 6,
   fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
   headings: {
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",

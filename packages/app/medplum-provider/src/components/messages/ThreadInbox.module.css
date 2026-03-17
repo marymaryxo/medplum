@@ -19,8 +19,37 @@
 }
 
 .selected {
-  background-color: light-dark(var(--mantine-color-black), var(--mantine-color-gray-6));
+  background-color: light-dark(#003848, #003848);
   color: light-dark(var(--mantine-color-white), var(--mantine-color-white));
+}
+
+.newThreadButton {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border: none;
+  border-radius: 999px;
+  background-color: #003848;
+  color: #ffffff;
+}
+
+.newThreadButton:hover {
+  background-color: #003848;
+}
+
+.headerStatusButton {
+  border: none;
+  border-radius: 999px;
+  background-color: #003848;
+  color: #ffffff;
+  padding: 8px 16px;
+  font-weight: 500;
+}
+
+.headerStatusButton:hover {
+  background-color: #003848;
+  color: #ffffff;
 }
 
 .attachmentPreviewPanel {
