@@ -37,10 +37,12 @@ import type { SearchRequest } from '@medplum/core';
 import { ChatList } from './ChatList';
 import { NewTopicDialog } from './NewTopicDialog';
 import { ReassignThreadDialog } from './ReassignThreadDialog';
+import { BulkReassignThreadsDialog } from './BulkReassignThreadsDialog';
 import { SharedFilesDialog } from './SharedFilesDialog';
 import { useThreadInbox } from '../../hooks/useThreadInbox';
 import classes from './ThreadInbox.module.css';
 import { useDisclosure } from '@mantine/hooks';
+import { useMediaQuery } from '@mantine/hooks';
 import { showErrorNotification } from '../../utils/notifications';
 import { showNotification } from '@mantine/notifications';
 import cx from 'clsx';
@@ -100,9 +102,14 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   );
   const [modalOpened, { open: openModal, close: closeModal }] = useDisclosure(false);
   const [reassignOpened, { open: openReassign, close: closeReassign }] = useDisclosure(false);
+  const [bulkReassignOpened, { open: openBulkReassign, close: closeBulkReassign }] = useDisclosure(false);
   const [sharedFilesOpened, { open: openSharedFiles, close: closeSharedFiles }] = useDisclosure(false);
   const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([]);
   const [ownershipLogExpanded, setOwnershipLogExpanded] = useState(false);
+  const isMobile = useMediaQuery('(max-width: 900px)');
+  const mobileThreadListHeightPx = 220;
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
 
   const currentSearch = useMemo(() => parseSearchRequest(`Communication?${query}`), [query]);
 
@@ -202,6 +209,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     viewedProviderRef?.split('/').pop() ||
     'Provider';
   const canReassignInThisView = isAdminUser && readOnlyMode && !!viewedProviderRef;
+  const canBulkSelect = canReassignInThisView && !isArchivedTab;
   const reassignmentReason = selectedThread?.identifier?.find(
     (id) => id.system === 'https://medplum.com/thread-state/reassign-reason'
   )?.value;
@@ -213,30 +221,85 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
       (id) => id.system === 'https://medplum.com/thread-event' && id.value === 'reassigned-to-you'
     );
   const [ownershipLogEntries, setOwnershipLogEntries] = useState<OwnershipLogEntry[]>([]);
+  const selectedThreadCount = selectedThreadIds.size;
+  const selectedThreads = useMemo(
+    () =>
+      threadMessages
+        .map(([thread]) => thread)
+        .filter((thread): thread is Communication => !!thread.id && selectedThreadIds.has(thread.id)),
+    [selectedThreadIds, threadMessages]
+  );
 
-  const handleReassign = useCallback(
-    async (providerRef: Reference<Practitioner>, displayName: string, reason?: string): Promise<void> => {
-      if (!selectedThread || !profile || !profileRefStr) return;
-      const priorOwnerName =
-        selectedThread.recipient?.[0]?.display ||
-        selectedThread.recipient?.[0]?.reference?.split('/').pop() ||
-        'Unassigned';
+  useEffect(() => {
+    if (!canBulkSelect) {
+      setSelectionMode(false);
+      setSelectedThreadIds(new Set());
+    }
+  }, [canBulkSelect]);
+
+  useEffect(() => {
+    if (!selectionMode) {
+      setSelectedThreadIds(new Set());
+    }
+  }, [selectionMode]);
+
+  const handleToggleSelectionMode = (): void => {
+    setSelectionMode((prev) => !prev);
+  };
+
+  const handleToggleThreadSelection = (threadId: string, checked: boolean): void => {
+    setSelectedThreadIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(threadId);
+      } else {
+        next.delete(threadId);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleAllThreads = (checked: boolean): void => {
+    if (!checked) {
+      setSelectedThreadIds(new Set());
+      return;
+    }
+    const next = new Set<string>();
+    for (const [thread] of threadMessages) {
+      if (thread.id) {
+        next.add(thread.id);
+      }
+    }
+    setSelectedThreadIds(next);
+  };
+
+  const reassignThread = useCallback(
+    async (
+      thread: Communication,
+      providerRef: Reference<Practitioner>,
+      displayName: string,
+      reason: string | undefined,
+      timestampBaseMs = Date.now()
+    ): Promise<void> => {
+      if (!profile || !profileRefStr) {
+        throw new Error('No signed in profile');
+      }
+      const priorOwnerName = thread.recipient?.[0]?.display || thread.recipient?.[0]?.reference?.split('/').pop() || 'Unassigned';
       const patientName =
-        (selectedThread.subject && typeof selectedThread.subject === 'object' && selectedThread.subject.display) ||
+        (thread.subject && typeof thread.subject === 'object' && thread.subject.display) ||
         'Patient';
       const fromProviderName = getDisplayString(profile);
       const reassignmentMessage = `${fromProviderName} reassigned ${patientName}'s thread to you.`;
-      const nowMs = Date.now();
-      const ownershipEventIso = new Date(nowMs).toISOString();
+      const ownershipEventIso = new Date(timestampBaseMs).toISOString();
       // Keep at least 2s gap so ordering remains deterministic with second-level DB precision.
-      const reassignmentEventIso = new Date(nowMs + 2000).toISOString();
+      const reassignmentEventIso = new Date(timestampBaseMs + 2000).toISOString();
 
       await medplum.updateResource({
-        ...selectedThread,
+        ...thread,
         recipient: [{ ...providerRef, display: displayName }],
         status: 'in-progress',
         identifier: [
-          ...(selectedThread.identifier ?? []).filter(
+          ...(thread.identifier ?? []).filter(
             (id) =>
               !(
                 (id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you') ||
@@ -257,7 +320,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
         resourceType: 'Communication',
         status: 'completed',
         sender: profileRefStr ? { reference: profileRefStr, display: fromProviderName } : undefined,
-        partOf: [{ reference: `Communication/${selectedThread.id}` }],
+        partOf: [{ reference: `Communication/${thread.id}` }],
         identifier: [{ system: 'https://medplum.com/thread-event', value: 'ownership-change' }],
         payload: [
           {
@@ -277,11 +340,19 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
         status: 'in-progress',
         sender: profileRefStr ? { reference: profileRefStr, display: fromProviderName } : undefined,
         recipient: [{ reference: providerRef.reference, display: displayName }],
-        partOf: [{ reference: `Communication/${selectedThread.id}` }],
+        partOf: [{ reference: `Communication/${thread.id}` }],
         identifier: [{ system: 'https://medplum.com/thread-event', value: 'reassigned-to-you' }],
         payload: [{ contentString: reassignmentMessage }],
         sent: reassignmentEventIso,
       });
+    },
+    [medplum, profile, profileRefStr]
+  );
+
+  const handleReassign = useCallback(
+    async (providerRef: Reference<Practitioner>, displayName: string, reason?: string): Promise<void> => {
+      if (!selectedThread || !profile || !profileRefStr) return;
+      await reassignThread(selectedThread, providerRef, displayName, reason);
       showNotification({
         color: 'green',
         message: `Thread reassigned to ${displayName}. You can no longer reply.`,
@@ -289,7 +360,59 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
       await refreshThreadMessages();
       closeReassign();
     },
-    [selectedThread, profile, profileRefStr, medplum, refreshThreadMessages, closeReassign]
+    [selectedThread, profile, profileRefStr, reassignThread, refreshThreadMessages, closeReassign]
+  );
+
+  const handleBulkReassign = useCallback(
+    async (providerRef: Reference<Practitioner>, displayName: string, reason?: string): Promise<void> => {
+      if (!profile || !profileRefStr) {
+        return;
+      }
+      const failures: string[] = [];
+      let successCount = 0;
+      for (let i = 0; i < selectedThreads.length; i++) {
+        const thread = selectedThreads[i];
+        const threadLabel =
+          thread.subject?.display ||
+          thread.topic?.text ||
+          `Thread ${thread.id ?? i + 1}`;
+        try {
+          await reassignThread(thread, providerRef, displayName, reason, Date.now() + i * 3000);
+          successCount++;
+        } catch (err) {
+          failures.push(`${threadLabel}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
+      }
+
+      if (successCount > 0) {
+        showNotification({
+          color: 'green',
+          message: `${successCount} threads reassigned to ${displayName}`,
+        });
+      }
+      if (failures.length > 0) {
+        showNotification({
+          color: 'red',
+          title: 'Failed to reassign some threads',
+          message: (
+            <Stack gap={2}>
+              {failures.map((failure, index) => (
+                <Text size="xs" key={index}>
+                  {failure}
+                </Text>
+              ))}
+            </Stack>
+          ),
+          autoClose: false,
+        });
+      }
+
+      setSelectionMode(false);
+      setSelectedThreadIds(new Set());
+      await refreshThreadMessages();
+      closeBulkReassign();
+    },
+    [closeBulkReassign, profile, profileRefStr, reassignThread, refreshThreadMessages, selectedThreads]
   );
 
   useEffect(() => {
@@ -351,9 +474,14 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
             Viewing {viewedProviderName}&apos;s inbox · Reassign only
           </Alert>
         )}
-        <Flex direction="row" h="100%" w="100%">
+        <Flex direction={isMobile ? 'column' : 'row'} h="100%" w="100%">
           {/* Left sidebar - Messages list */}
-          <Flex direction="column" w={380} h="100%" className={classes.rightBorder}>
+          <Flex
+            direction="column"
+            w={isMobile ? '100%' : 380}
+            h={isMobile ? (selectedThread ? `${mobileThreadListHeightPx}px` : '100%') : '100%'}
+            className={cx({ [classes.rightBorder]: !isMobile })}
+          >
             <Paper h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
               <ScrollArea style={{ flex: 1 }} scrollbarSize={10} type="hover" scrollHideDelay={250}>
                 <Flex h={64} align="center" justify="space-between" p="md">
@@ -377,11 +505,21 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       Archived
                     </Button>
                   </Group>
-                  {!readOnlyMode && (
-                    <ActionIcon radius="50%" variant="filled" color="blue" onClick={openModal}>
-                      <IconPlus size={16} />
-                    </ActionIcon>
-                  )}
+                  <Group gap="xs">
+                    {canBulkSelect && (
+                      <Button
+                        variant={selectionMode ? 'filled' : 'light'}
+                        onClick={handleToggleSelectionMode}
+                      >
+                        {selectionMode ? 'Done selecting' : 'Select threads'}
+                      </Button>
+                    )}
+                    {!readOnlyMode && (
+                      <ActionIcon radius="50%" variant="filled" color="blue" onClick={openModal}>
+                        <IconPlus size={16} />
+                      </ActionIcon>
+                    )}
+                  </Group>
                 </Flex>
                 <Divider />
                 {loading ? (
@@ -410,11 +548,36 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       getThreadUri={getThreadUri}
                       unreadThreadIds={unreadThreadIds}
                       currentProfileRefStr={readOnlyMode && viewedProviderRef ? viewedProviderRef : profileRefStr}
+                      selectionMode={selectionMode}
+                      selectedThreadIds={selectedThreadIds}
+                      onToggleThread={handleToggleThreadSelection}
+                      onToggleAll={handleToggleAllThreads}
                     />
                   )
                 )}
                 {threadMessages.length === 0 && !loading && <EmptyMessagesState />}
               </ScrollArea>
+              {selectionMode && selectedThreadCount > 0 && (
+                <Box
+                  p="sm"
+                  style={{
+                    position: 'sticky',
+                    bottom: 0,
+                    borderTop: '1px solid var(--mantine-color-gray-3)',
+                    background: 'var(--mantine-color-body)',
+                    zIndex: 5,
+                  }}
+                >
+                  <Group justify="space-between" wrap="nowrap">
+                    <Text size="sm" fw={600}>
+                      {selectedThreadCount} selected
+                    </Text>
+                    <Button size="xs" onClick={openBulkReassign}>
+                      Reassign selected
+                    </Button>
+                  </Group>
+                </Box>
+              )}
               {!loading && total !== undefined && total > itemsPerPage && (
                 <Box p="md">
                   <Center>
@@ -441,38 +604,92 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
           {selectedThread ? (
             <>
               {/* Main chat area */}
-              <Flex direction="column" style={{ flex: 1, minHeight: 0 }} h="100%" className={classes.rightBorder}>
+              <Flex
+                direction="column"
+                style={{ flex: 1, minHeight: 0 }}
+                h={isMobile ? `calc(100% - ${mobileThreadListHeightPx}px)` : '100%'}
+                className={cx({ [classes.rightBorder]: !isMobile })}
+              >
                 <Paper h="100%" style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
                   <Stack h="100%" gap={0} style={{ minHeight: 0 }}>
-                    <Flex h={64} align="center" justify="space-between" p="md">
-                      <Text fw={800} truncate fz="lg">
-                        {selectedThread.topic?.text ?? 'Messages'}
-                      </Text>
+                    <Stack gap={isMobile ? 8 : 0} p="md">
+                      <Flex h={isMobile ? 'auto' : 40} align="center" justify="space-between">
+                        <Text fw={800} truncate fz="lg">
+                          {selectedThread.topic?.text ?? 'Messages'}
+                        </Text>
 
-                      {(canReassignInThisView || !readOnlyMode) && (
-                        <Group gap="xs">
-                          <ActionIcon
-                            variant="light"
-                            radius="xl"
-                            size="lg"
-                            onClick={openSharedFiles}
-                            aria-label="Open shared files"
-                          >
-                            <IconFolder size={16} />
-                          </ActionIcon>
+                        {!isMobile && (canReassignInThisView || !readOnlyMode) && (
+                          <Group gap="xs" wrap="nowrap" justify="flex-end" align="center">
+                            <Button
+                              variant="light"
+                              size="sm"
+                              h={32}
+                              radius="xl"
+                              leftSection={<IconFolder size={16} />}
+                              onClick={openSharedFiles}
+                            >
+                              Shared files
+                            </Button>
+                            <Menu position="bottom-end" shadow="md">
+                              <Menu.Target>
+                                <Button
+                                  variant="light"
+                                  size="sm"
+                                  h={32}
+                                  radius="xl"
+                                  color={getStatusColor(isArchivedTab ? 'completed' : selectedThread.status)}
+                                  rightSection={<IconChevronDown size={16} />}
+                                >
+                                  {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
+                                </Button>
+                              </Menu.Target>
+
+                              <Menu.Dropdown>
+                                {canReassignInThisView ? (
+                                  <Menu.Item onClick={openReassign}>
+                                    Reassign thread
+                                  </Menu.Item>
+                                ) : (
+                                  <>
+                                    {isArchivedTab && (
+                                      <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}>
+                                        Move to inbox
+                                      </Menu.Item>
+                                    )}
+                                    <Menu.Item
+                                      onClick={() => handleMarkThreadAsUnread()}
+                                    >
+                                      Mark as unread
+                                    </Menu.Item>
+                                    {!isArchivedTab && (
+                                      <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}>
+                                        Archive
+                                      </Menu.Item>
+                                    )}
+                                  </>
+                                )}
+                              </Menu.Dropdown>
+                            </Menu>
+                          </Group>
+                        )}
+                      </Flex>
+
+                      {isMobile && (canReassignInThisView || !readOnlyMode) && (
+                        <Group gap="xs" grow wrap="nowrap">
+                          <Button variant="light" size="xs" leftSection={<IconFolder size={14} />} onClick={openSharedFiles}>
+                            Shared files
+                          </Button>
                           <Menu position="bottom-end" shadow="md">
                             <Menu.Target>
                               <Button
                                 variant="light"
+                                size="xs"
                                 color={getStatusColor(isArchivedTab ? 'completed' : selectedThread.status)}
-                                rightSection={<IconChevronDown size={16} />}
-                                radius="xl"
-                                size="sm"
+                                rightSection={<IconChevronDown size={14} />}
                               >
                                 {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
                               </Button>
                             </Menu.Target>
-
                             <Menu.Dropdown>
                               {canReassignInThisView ? (
                                 <Menu.Item onClick={openReassign}>
@@ -501,7 +718,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                           </Menu>
                         </Group>
                       )}
-                    </Flex>
+                    </Stack>
                     <Divider />
                     {isReassignedAway && (
                       <Alert
@@ -514,7 +731,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       >
                         <Text>Thread reassigned to {reassignedToName}. You can no longer reply.</Text>
                         {reassignmentReason && (
-                          <Text size="xs" mt={4} style={{ color: '#000000' }}>
+                          <Text size="xs" mt={4}>
                             Reason: {reassignmentReason}
                           </Text>
                         )}
@@ -531,7 +748,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                       >
                         <Text>{assignerName} reassigned {selectedPatientName}&apos;s thread to you.</Text>
                         {reassignmentReason && (
-                          <Text size="xs" mt={4} style={{ color: '#000000' }}>
+                          <Text size="xs" mt={4}>
                             Reason: {reassignmentReason}
                           </Text>
                         )}
@@ -590,7 +807,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
               </Flex>
 
               {/* Right sidebar - Patient summary */}
-              {selectedThread.subject && showPatientSummary && (
+              {selectedThread.subject && showPatientSummary && !isMobile && (
                 <Flex direction="column" w={300} h="100%">
                   <ScrollArea p={0} h="100%" scrollbarSize={10} type="hover" scrollHideDelay={250}>
                     <PatientSummary key={selectedThread.id} patient={selectedThread.subject as Reference<Patient>} />
@@ -612,6 +829,15 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
           opened={reassignOpened}
           onClose={closeReassign}
           onReassign={handleReassign}
+        />
+      )}
+      {canReassignInThisView && (
+        <BulkReassignThreadsDialog
+          opened={bulkReassignOpened}
+          threadCount={selectedThreadCount}
+          fromProviderName={viewedProviderName}
+          onClose={closeBulkReassign}
+          onReassign={handleBulkReassign}
         />
       )}
       <SharedFilesDialog thread={selectedThread} opened={sharedFilesOpened} onClose={closeSharedFiles} />

@@ -10,6 +10,7 @@ import type { JSX } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
+const OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadIds';
 
 interface MessagesNotificationIconProps {
   readonly iconComponent: JSX.Element;
@@ -30,11 +31,17 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
         return;
       }
 
-      const unreadCriteria = `recipient=${profileRefStr}&sender:not=${profileRefStr}&part-of:missing=false&_count=500`;
-      const unreadBundle = await medplum.search('Communication', unreadCriteria, { cache });
+      const unreadBundle = await searchAllCommunications(
+        medplum,
+        {
+          recipient: profileRefStr,
+          'sender:not': profileRefStr,
+          'part-of:missing': 'false',
+        },
+        cache
+      );
       const unreadParentIds = new Set<string>();
-      for (const entry of unreadBundle.entry ?? []) {
-        const msg = entry.resource as Communication | undefined;
+      for (const msg of unreadBundle) {
         if (!msg || msg.received) {
           continue;
         }
@@ -45,18 +52,19 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
       }
 
       const localUnreadIds = loadUserMarkedUnreadThreadIds(profileRefStr);
-      const candidateIds = new Set<string>([...unreadParentIds, ...localUnreadIds]);
-      if (candidateIds.size === 0) {
-        setUnreadThreadCount(0);
-        return;
-      }
+      const openedReassignedThreadIds = loadOpenedReassignedThreadIds(profileRefStr);
 
-      const parentThreads = await medplum.searchResources('Communication', {
-        _id: [...candidateIds].join(','),
+      const parentThreads = await searchAllCommunications(
+        medplum,
+        {
         'part-of:missing': 'true',
         status: 'in-progress',
-        _count: String(Math.max(candidateIds.size, 20)),
-      });
+          recipient: profileRefStr,
+          'identifier:not': 'ai-message-topic',
+          '_has:Communication:part-of:_id:not': 'null',
+        },
+        cache
+      );
 
       let count = 0;
       for (const parent of parentThreads) {
@@ -71,7 +79,11 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
         if (!assignedToProfile) {
           continue;
         }
-        if (unreadParentIds.has(parent.id) || localUnreadIds.has(parent.id)) {
+        if (
+          unreadParentIds.has(parent.id) ||
+          localUnreadIds.has(parent.id) ||
+          isUnopenedReassignedArrivalThread(parent, profileRefStr, openedReassignedThreadIds)
+        ) {
           count++;
         }
       }
@@ -112,6 +124,40 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
   );
 }
 
+async function searchAllCommunications(
+  medplum: ReturnType<typeof useMedplum>,
+  params: Record<string, string>,
+  cache: 'default' | 'reload'
+): Promise<Communication[]> {
+  const count = 500;
+  let offset = 0;
+  const results: Communication[] = [];
+  while (true) {
+    const query = new URLSearchParams({
+      ...params,
+      _count: String(count),
+      _offset: String(offset),
+    });
+    const bundle = await medplum.search('Communication', query.toString(), { cache });
+    const rows =
+      bundle.entry
+        ?.map((entry) => entry.resource as Communication | undefined)
+        .filter((r): r is Communication => !!r) ?? [];
+    results.push(...rows);
+    if (rows.length === 0) {
+      break;
+    }
+    offset += rows.length;
+    if (bundle.total !== undefined && offset >= bundle.total) {
+      break;
+    }
+    if (rows.length < count) {
+      break;
+    }
+  }
+  return results;
+}
+
 function getScopedStorageKey(baseKey: string, profileRefStr: string | undefined): string {
   return profileRefStr ? `${baseKey}:${profileRefStr}` : `${baseKey}:anonymous`;
 }
@@ -127,6 +173,36 @@ function loadUserMarkedUnreadThreadIds(profileRefStr?: string): Set<string> {
   } catch {
     return new Set<string>();
   }
+}
+
+function loadOpenedReassignedThreadIds(profileRefStr?: string): Set<string> {
+  try {
+    const stored = localStorage.getItem(getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr));
+    if (!stored) {
+      return new Set<string>();
+    }
+    const parsed = JSON.parse(stored) as string[];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function isUnopenedReassignedArrivalThread(
+  parent: Communication,
+  effectiveProfileRefStr: string | undefined,
+  openedReassignedThreadIds: Set<string>
+): boolean {
+  if (!parent.id || !effectiveProfileRefStr || openedReassignedThreadIds.has(parent.id)) {
+    return false;
+  }
+  const hasReassignedMarker = !!parent.identifier?.some(
+    (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
+  );
+  if (!hasReassignedMarker || parent.status !== 'in-progress') {
+    return false;
+  }
+  return !!parent.recipient?.some((r) => referenceMatches(r.reference, effectiveProfileRefStr));
 }
 
 function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {

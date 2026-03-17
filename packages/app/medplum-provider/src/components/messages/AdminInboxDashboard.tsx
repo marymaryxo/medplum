@@ -36,28 +36,33 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
         setLoading(true);
         setError(undefined);
 
-        const activeThreads = await searchAllCommunications(medplum, {
+        const inboxThreads = await searchAllCommunications(medplum, {
           'part-of:missing': 'true',
           status: 'in-progress',
         });
-        const openMessages = await searchAllCommunications(medplum, {
+        const unreadMessages = await searchAllCommunications(medplum, {
           'part-of:missing': 'false',
-          'status:not': 'completed',
+          'received:missing': 'true',
         });
 
         const activeByProvider = new Map<string, number>();
+        const activeThreadIdsByProvider = new Map<string, Set<string>>();
         const unansweredThreadIdsByProvider = new Map<string, Set<string>>();
         const oldestUnansweredByProvider = new Map<string, string>();
 
-        for (const thread of activeThreads) {
+        for (const thread of inboxThreads) {
           const providerRef = normalizeRef(thread.recipient?.[0]?.reference);
-          if (!providerRef) {
+          const threadId = thread.id;
+          if (!providerRef || !threadId) {
             continue;
           }
           activeByProvider.set(providerRef, (activeByProvider.get(providerRef) ?? 0) + 1);
+          const activeThreadIds = activeThreadIdsByProvider.get(providerRef) ?? new Set<string>();
+          activeThreadIds.add(threadId);
+          activeThreadIdsByProvider.set(providerRef, activeThreadIds);
         }
 
-        for (const message of openMessages) {
+        for (const message of unreadMessages) {
           const recipientRef = normalizeRef(message.recipient?.[0]?.reference);
           if (!recipientRef) {
             continue;
@@ -68,6 +73,10 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
           }
           const parentThreadRef = normalizeRef(message.partOf?.[0]?.reference);
           if (!parentThreadRef) {
+            continue;
+          }
+          const activeThreadIds = activeThreadIdsByProvider.get(recipientRef);
+          if (!activeThreadIds || !activeThreadIds.has(parentThreadRef.replace('Communication/', ''))) {
             continue;
           }
           const setForProvider = unansweredThreadIdsByProvider.get(recipientRef) ?? new Set<string>();
@@ -151,10 +160,7 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
           <Table.Td>{row.unansweredThreadCount}</Table.Td>
           <Table.Td>
             {row.oldestUnansweredSent ? (
-              <Text size="sm" c={isOlderThanHours(row.oldestUnansweredSent, 24) ? 'orange.8' : undefined} fw={isOlderThanHours(row.oldestUnansweredSent, 24) ? 600 : undefined}>
-                {isOlderThanHours(row.oldestUnansweredSent, 24) ? '⚠ ' : ''}
-                {formatRelativeAge(row.oldestUnansweredSent)}
-              </Text>
+              <Text size="sm">{formatRelativeAge(row.oldestUnansweredSent)}</Text>
             ) : (
               'N/A'
             )}
@@ -184,9 +190,9 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Provider</Table.Th>
-                <Table.Th>Total Active Threads</Table.Th>
-                <Table.Th>Unanswered Thread Count</Table.Th>
-                <Table.Th>Oldest Unanswered</Table.Th>
+                <Table.Th>Inbox Threads</Table.Th>
+                <Table.Th>Unread Threads</Table.Th>
+                <Table.Th>Oldest Unread</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>{tableRows}</Table.Tbody>
@@ -321,15 +327,6 @@ function formatRelativeAge(isoString: string): string {
   }
   const days = Math.floor(hours / 24);
   return `${days}d ${hours % 24}h`;
-}
-
-function isOlderThanHours(isoString: string, hours: number): boolean {
-  const date = new Date(isoString);
-  const diffMs = Date.now() - date.getTime();
-  if (Number.isNaN(diffMs) || diffMs < 0) {
-    return false;
-  }
-  return diffMs >= hours * 60 * 60 * 1000;
 }
 
 function resolveProviderName(providerRef: string, providerNameMap: Map<string, string>): string {

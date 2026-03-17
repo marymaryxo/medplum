@@ -15,6 +15,7 @@
   background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-gray-8));
   color: light-dark(var(--mantine-color-black), var(--mantine-color-gray-4));
   font-weight: 500;
+  font-size: 14px;
 }
 
 .selected {
@@ -34,3 +35,4 @@
 .chatArea {
   min-height: 0;
 }
+

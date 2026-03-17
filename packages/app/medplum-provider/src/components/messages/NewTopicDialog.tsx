@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import { Button, Modal, Stack, Text } from '@mantine/core';
+import { Button, Modal, Stack, Text, TextInput } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import { createReference } from '@medplum/core';
 import type { Communication, Patient, Reference } from '@medplum/fhirtypes';
@@ -25,6 +25,7 @@ export const NewTopicDialog = (props: NewTopicDialogProps): JSX.Element => {
   const [patient, setPatient] = useState<Reference<Patient> | undefined>(
     subject ? createReference(subject as Patient) : undefined
   );
+  const [topic, setTopic] = useState('');
 
   const handleSubmit = async (): Promise<void> => {
     if (!patient) {
@@ -45,6 +46,7 @@ export const NewTopicDialog = (props: NewTopicDialogProps): JSX.Element => {
       subject: patient,
       sender: profileRef,
       recipient,
+      ...(topic.trim() ? { topic: { text: topic.trim() } } : {}),
     };
 
     try {
@@ -71,6 +73,14 @@ export const NewTopicDialog = (props: NewTopicDialogProps): JSX.Element => {
             onChange={(value) => {
               setPatient(value ? (createReference(value) as Reference<Patient>) : undefined);
             }}
+          />
+        </Stack>
+        <Stack gap={0}>
+          <Text fw={500}>Topic (optional)</Text>
+          <TextInput
+            placeholder="Enter your topic"
+            value={topic}
+            onChange={(e) => setTopic(e.currentTarget.value)}
           />
         </Stack>
 

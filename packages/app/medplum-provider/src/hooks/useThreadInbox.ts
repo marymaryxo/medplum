@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Communication } from '@medplum/fhirtypes';
 import { useMedplum } from '@medplum/react';
-import { getDisplayString, getReferenceString } from '@medplum/core';
+import { getReferenceString } from '@medplum/core';
 
 const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
-const OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadIds';
+const OPENED_REASSIGNED_THREAD_MARKERS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadMarkers';
 
 function getScopedStorageKey(baseKey: string, profileRefStr: string | undefined): string {
   return profileRefStr ? `${baseKey}:${profileRefStr}` : `${baseKey}:anonymous`;
@@ -35,7 +35,9 @@ function saveUserMarkedUnreadToStorage(ids: Set<string>, profileRefStr?: string)
 
 function loadOpenedReassignedFromStorage(profileRefStr?: string): Set<string> {
   try {
-    const stored = localStorage.getItem(getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr));
+    const stored = localStorage.getItem(
+      getScopedStorageKey(OPENED_REASSIGNED_THREAD_MARKERS_STORAGE_KEY, profileRefStr)
+    );
     if (stored) {
       const arr = JSON.parse(stored) as string[];
       return new Set(Array.isArray(arr) ? arr : []);
@@ -49,7 +51,7 @@ function loadOpenedReassignedFromStorage(profileRefStr?: string): Set<string> {
 function saveOpenedReassignedToStorage(ids: Set<string>, profileRefStr?: string): void {
   try {
     localStorage.setItem(
-      getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr),
+      getScopedStorageKey(OPENED_REASSIGNED_THREAD_MARKERS_STORAGE_KEY, profileRefStr),
       JSON.stringify([...ids])
     );
   } catch {
@@ -140,7 +142,6 @@ export function useThreadInbox({
     }
     const profile = medplum.getProfile();
     const profileRefStr = profile ? getReferenceString(profile) : undefined;
-    const profileDisplay = profile ? getDisplayString(profile as any) : undefined;
     const recipientForQuery = recipientRefOverride ?? profileRefStr;
     const shouldFilterByRecipient =
       !!recipientForQuery &&
@@ -232,35 +233,21 @@ export function useThreadInbox({
           const assignerRefFromThreadState = parent.identifier?.find(
             (id) => id.system === 'https://medplum.com/thread-state/assigner-ref'
           )?.value;
-          const assignerDisplayFromThreadState = parent.identifier?.find(
-            (id) => id.system === 'https://medplum.com/thread-state/assigner-display'
-          )?.value;
           const assignedToEffectiveProfile =
             !!effectiveProfileRefStr &&
             !!parent.recipient?.some((r) => referenceMatches(r.reference, effectiveProfileRefStr));
-          const reassignedAwayFromEffectiveProfile =
-            !!effectiveProfileRefStr && isReassignedThread && !assignedToEffectiveProfile;
-          const assignedByEffectiveProfile =
-            isReassignedThread &&
-            ((!!effectiveProfileRefStr && referenceMatches(assignerRefFromThreadState, effectiveProfileRefStr)) ||
-              (!!profileDisplay && normalizeName(assignerDisplayFromThreadState) === normalizeName(profileDisplay)));
-
-          const recipientMatchesEffectiveProfile = !!effectiveProfileRefStr
-            ? !!parent.recipient?.some(
-                (r) =>
-                  referenceMatches(r.reference, effectiveProfileRefStr) ||
-                  (profileDisplay && normalizeName(r.display) === normalizeName(profileDisplay))
-              )
-            : false;
+          const reassignedByEffectiveProfile =
+            !!effectiveProfileRefStr && isReassignedThread && referenceMatches(assignerRefFromThreadState, effectiveProfileRefStr);
 
           if (requestedStatus === 'in-progress') {
-            // Inbox: only include threads assigned to the effective profile.
-            return parent.status === 'in-progress' && recipientMatchesEffectiveProfile && !reassignedAwayFromEffectiveProfile;
+            // Inbox: only include threads currently assigned to the effective profile.
+            return parent.status === 'in-progress' && assignedToEffectiveProfile;
           }
           if (requestedStatus === 'completed') {
-            // Reassigned-away threads should still be visible in Done for that user
-            // even if the parent remains in-progress for the new assignee.
-            return parent.status === 'completed' || reassignedAwayFromEffectiveProfile || assignedByEffectiveProfile;
+            // Archived: include threads completed for this provider and threads this provider reassigned away.
+            // This prevents cross-provider leakage in delegated admin views.
+            const completedForEffectiveProfile = parent.status === 'completed' && assignedToEffectiveProfile;
+            return completedForEffectiveProfile || reassignedByEffectiveProfile;
           }
           return parent.status === requestedStatus;
         })
@@ -380,7 +367,7 @@ export function useThreadInbox({
         )
       ) {
         const opened = loadOpenedReassignedFromStorage(currentProfileRefStr);
-        opened.add(threadId);
+        opened.add(getReassignmentOpenMarker(openedThread[0]));
         saveOpenedReassignedToStorage(opened, currentProfileRefStr);
       }
       // User is opening this thread - remove so it will become read when they view
@@ -538,9 +525,9 @@ function getThreadSortTimeMs([parent, lastMessage]: [Communication, Communicatio
 function isUnopenedReassignedArrivalThread(
   [parent]: [Communication, Communication | undefined],
   effectiveProfileRefStr: string | undefined,
-  openedReassignedThreadIds: Set<string>
+  openedReassignedThreadMarkers: Set<string>
 ): boolean {
-  if (!parent.id || !effectiveProfileRefStr || openedReassignedThreadIds.has(parent.id)) {
+  if (!parent.id || !effectiveProfileRefStr) {
     return false;
   }
   const hasReassignedMarker = !!parent.identifier?.some(
@@ -552,8 +539,17 @@ function isUnopenedReassignedArrivalThread(
   if (parent.status !== 'in-progress') {
     return false;
   }
+  const marker = getReassignmentOpenMarker(parent);
+  if (openedReassignedThreadMarkers.has(marker)) {
+    return false;
+  }
   const assignedToEffectiveProfile = !!parent.recipient?.some((r) => referenceMatches(r.reference, effectiveProfileRefStr));
   return assignedToEffectiveProfile;
+}
+
+function getReassignmentOpenMarker(parent: Communication): string {
+  const reassignedAt = parent.identifier?.find((id) => id.system === 'https://medplum.com/thread-state/reassigned-at')?.value;
+  return reassignedAt ? `${parent.id}:${reassignedAt}` : (parent.id as string);
 }
 
 function getReassignedAtMs(parent: Communication): number {
@@ -564,20 +560,6 @@ function getReassignedAtMs(parent: Communication): number {
   }
   const ms = new Date(reassignedAt).getTime();
   return Number.isNaN(ms) ? 0 : ms;
-}
-
-function isAdminProfile(
-  profile: { email?: string; username?: string; telecom?: { system?: string; value?: string }[] } | undefined
-): boolean {
-  if (!profile) {
-    return false;
-  }
-  const directEmail = profile.email ?? profile.username;
-  if (directEmail?.toLowerCase() === 'admin@example.com') {
-    return true;
-  }
-  const practitionerEmail = profile.telecom?.find((t) => t.system === 'email')?.value;
-  return practitionerEmail?.toLowerCase() === 'admin@example.com';
 }
 
 function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {
@@ -591,6 +573,3 @@ function referenceMatches(refStr: string | undefined, otherRefStr: string | unde
   return normalize(refStr) === normalize(otherRefStr);
 }
 
-function normalizeName(value: string | undefined): string {
-  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
-}

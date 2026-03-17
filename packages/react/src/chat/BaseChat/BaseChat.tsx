@@ -7,6 +7,7 @@ import {
   Button,
   Group,
   Image,
+  Loader,
   LoadingOverlay,
   Modal,
   Paper,
@@ -15,6 +16,7 @@ import {
   Stack,
   Text,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import { RichTextEditor, Link as TiptapLink } from '@mantine/tiptap';
@@ -30,10 +32,9 @@ import type { Attachment, Bundle, Communication, Reference } from '@medplum/fhir
 import { useCachedBinaryUrl, useMedplum, useResource, useSubscription } from '@medplum/react-hooks';
 import { IconArrowRight, IconDownload, IconFile, IconFileText, IconFileTypePdf, IconPaperclip } from '@tabler/icons-react';
 import type { JSX, LegacyRef, MouseEvent } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
 import cx from 'clsx';
-import { AttachmentButton } from '../../AttachmentButton/AttachmentButton';
 import { Form } from '../../Form/Form';
 import { ResourceAvatar } from '../../ResourceAvatar/ResourceAvatar';
 import classes from './BaseChat.module.css';
@@ -220,6 +221,13 @@ export interface BaseChatProps extends PaperProps {
   readonly hideInput?: boolean;
 }
 
+interface PendingUpload {
+  id: string;
+  file: File;
+  status: 'uploading' | 'failed';
+  error?: string;
+}
+
 /**
  * BaseChat component for displaying and managing communications.
  *
@@ -258,7 +266,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const scrollToBottomRef = useRef<boolean>(true);
   const [internalAttachments, setInternalAttachments] = useState<Attachment[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const sendRef = useRef<() => void>(() => {});
 
   const enterToSend = useMemo(
@@ -301,12 +309,17 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
   const setAttachments = useExternalAttachments ? onAttachmentsChange : setInternalAttachments;
   const attachmentsRef = useRef<Attachment[]>(attachments);
   attachmentsRef.current = attachments;
+  const isUploading = pendingUploads.some((p) => p.status === 'uploading');
   const firstScrollRef = useRef(true);
   const initialLoadRef = useRef(true);
+  const shouldAutoScrollRef = useRef(true);
+
+  useImperativeHandle(attachmentTriggerRef, () => ({ trigger: () => fileInputRef.current?.click() }), []);
 
   /** Direct send - bypasses form entirely for reliable attachment sending */
   const performSend = useCallback(() => {
     if (inputDisabled || !editor) return;
+    if (isUploading) return;
     const text = editor.getText().trim();
     if (!text && attachments.length === 0) return;
     const html = editor.getHTML();
@@ -323,7 +336,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
       setInternalAttachments([]);
     }
     scrollToBottomRef.current = true;
-  }, [inputDisabled, editor, attachments, sendMessage, useExternalAttachments, onAttachmentsChange]);
+  }, [inputDisabled, editor, isUploading, attachments, sendMessage, useExternalAttachments, onAttachmentsChange]);
 
   useEffect(() => {
     sendRef.current = performSend;
@@ -467,41 +480,61 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     [performSend]
   );
 
-  const handleFileSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (!files?.length || inputDisabled || uploading) {
-        return;
-      }
-      setUploading(true);
+  const uploadFile = useCallback(
+    async (pendingId: string, file: File): Promise<void> => {
       try {
-        const newAttachments: Attachment[] = [];
-        for (let i = 0; i < files.length; i++) {
-          const file = files[i];
-          const attachment = await medplum.createAttachment({
-            data: file,
-            contentType: file.type || 'application/octet-stream',
-            filename: file.name,
-          });
-          newAttachments.push(attachment);
-        }
-        if (useExternalAttachments) {
-          onAttachmentsChange!([...attachments, ...newAttachments]);
-        } else {
-          setInternalAttachments((prev) => [...prev, ...newAttachments]);
-        }
-      } catch (err) {
-        showNotification({
-          color: 'red',
-          title: 'Upload failed',
-          message: normalizeErrorString(err as Error),
+        const attachment = await medplum.createAttachment({
+          data: file,
+          contentType: file.type || 'application/octet-stream',
+          filename: file.name,
         });
-      } finally {
-        setUploading(false);
-        e.target.value = '';
+        if (useExternalAttachments) {
+          onAttachmentsChange!([...(attachmentsRef.current ?? []), attachment]);
+        } else {
+          setInternalAttachments((prev) => [...prev, attachment]);
+        }
+        setPendingUploads((prev) => prev.filter((p) => p.id !== pendingId));
+      } catch (err) {
+        setPendingUploads((prev) =>
+          prev.map((p) =>
+            p.id === pendingId
+              ? { ...p, status: 'failed', error: normalizeErrorString(err as Error) }
+              : p
+          )
+        );
       }
     },
-    [medplum, inputDisabled, uploading, useExternalAttachments, attachments, onAttachmentsChange]
+    [medplum, useExternalAttachments, onAttachmentsChange]
+  );
+
+  const enqueueFiles = useCallback(
+    (files: FileList): void => {
+      if (inputDisabled || files.length === 0) {
+        return;
+      }
+      const pending: PendingUpload[] = Array.from(files).map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file,
+        status: 'uploading',
+      }));
+      setPendingUploads((prev) => [...prev, ...pending]);
+      for (const item of pending) {
+        void uploadFile(item.id, item.file);
+      }
+    },
+    [inputDisabled, uploadFile]
+  );
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files?.length) {
+        return;
+      }
+      enqueueFiles(files);
+      e.target.value = '';
+    },
+    [enqueueFiles]
   );
 
   const removeAttachment = useCallback(
@@ -510,6 +543,22 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     },
     [attachments, setAttachments]
   );
+
+  const retryPendingUpload = useCallback(
+    (pendingId: string): void => {
+      const pending = pendingUploads.find((p) => p.id === pendingId);
+      if (!pending) {
+        return;
+      }
+      setPendingUploads((prev) => prev.map((p) => (p.id === pendingId ? { ...p, status: 'uploading', error: undefined } : p)));
+      void uploadFile(pendingId, pending.file);
+    },
+    [pendingUploads, uploadFile]
+  );
+
+  const removePendingUpload = useCallback((pendingId: string): void => {
+    setPendingUploads((prev) => prev.filter((p) => p.id !== pendingId));
+  }, []);
 
   // Disabled because we can make sure this will trigger an update when local profile !== medplum.getProfile()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -549,9 +598,32 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
     return undefined;
   }, [visibleCommunications, profileRefStr]);
 
+  const handleScrollPositionChange = useCallback(
+    ({ y }: { x: number; y: number }): void => {
+      const viewport = scrollAreaRef.current;
+      if (!viewport) {
+        return;
+      }
+      if (viewport.clientHeight === 0) {
+        shouldAutoScrollRef.current = true;
+        return;
+      }
+      const distanceFromBottom = viewport.scrollHeight - y - viewport.clientHeight;
+      shouldAutoScrollRef.current = distanceFromBottom <= 96;
+    },
+    []
+  );
+
+  useEffect(() => {
+    // When switching threads/queries, reset initial scroll behavior for the new conversation.
+    firstScrollRef.current = true;
+    scrollToBottomRef.current = true;
+    shouldAutoScrollRef.current = true;
+  }, [query]);
+
   useEffect(() => {
     if (communications !== prevCommunicationsRef.current) {
-      scrollToBottomRef.current = true;
+      scrollToBottomRef.current = firstScrollRef.current || shouldAutoScrollRef.current;
     }
     prevCommunicationsRef.current = communications;
   }, [communications]);
@@ -566,6 +638,7 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
           ...(firstScrollRef.current ? { duration: 0 } : { behavior: 'smooth' }),
         });
         firstScrollRef.current = false;
+        shouldAutoScrollRef.current = true;
         scrollToBottomRef.current = false;
       }
     }
@@ -609,7 +682,11 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
             </Group>
           </Stack>
         ) : (
-          <ScrollArea viewportRef={scrollAreaRef} className={classes.chatScrollArea}>
+          <ScrollArea
+            viewportRef={scrollAreaRef}
+            className={classes.chatScrollArea}
+            onScrollPositionChange={handleScrollPositionChange}
+          >
             {/* We don't wrap our scrollarea or scrollarea children with this overlay since it seems to break the rendering of the virtual scroll element */}
             {/* Instead we manually set the width and height to match the parent and use absolute positioning */}
             <LoadingOverlay
@@ -684,43 +761,16 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
             tabIndex={-1}
             aria-hidden
           />
-          {!useExternalAttachments && (
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              style={{ display: 'none' }}
-              onChange={handleFileSelect}
-              accept="*/*"
-            />
-          )}
-          <AttachmentButton
-            onUpload={(att) =>
-              useExternalAttachments
-                ? onAttachmentsChange!([...(attachmentsRef.current ?? []), att])
-                : setInternalAttachments((prev) => [...prev, att])
-            }
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleFileSelect}
+            accept="*/*"
             disabled={inputDisabled}
-            triggerRef={attachmentTriggerRef}
-          >
-            {({ onClick }) => (
-              <Group gap={4} wrap="nowrap" style={{ flex: 1 }} align="flex-end">
-                {!inputDisabled && (
-                  <ActionIcon
-                    type="button"
-                    size="1.9rem"
-                    radius="xl"
-                    variant="subtle"
-                    className={cx(classes.composePaperclip, classes.composeSideButton)}
-                    aria-label="Add attachment"
-                    disabled={uploading}
-                    onClick={onClick}
-                    style={{ flexShrink: 0 }}
-                  >
-                    <IconPaperclip size="1.15rem" stroke={1.5} />
-                  </ActionIcon>
-                )}
-                <Box style={{ flex: 1, minWidth: 0 }}>
+          />
+          <Box style={{ flex: 1, minWidth: 0 }} className={classes.composeUnifiedContainer}>
                   <RichTextEditor
                     editor={editor}
                     variant="subtle"
@@ -738,13 +788,19 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                       </RichTextEditor.ControlsGroup>
                     </RichTextEditor.Toolbar>
                     <RichTextEditor.Content />
-                    {attachments.length > 0 && (
+                    {(attachments.length > 0 || pendingUploads.length > 0) && (
                       <Group className={classes.editorAttachmentChips} gap={6} wrap="wrap">
                         {attachments.map((att, i) => (
                           <Group key={i} gap={4} className={classes.attachmentChip}>
+                            <span className={classes.attachmentChipIcon}>{getAttachmentTypeIcon(att)}</span>
                             <Text size="xs" truncate maw={180}>
                               {getAttachmentDisplayName(att)}
                             </Text>
+                            {formatFileSize(att.size) && (
+                              <Text size="xs" className={cx(classes.attachmentChipSize, classes.secondaryText)}>
+                                {formatFileSize(att.size)}
+                              </Text>
+                            )}
                             {!inputDisabled && (
                               <ActionIcon
                                 size="xs"
@@ -758,27 +814,86 @@ export function BaseChat(props: BaseChatProps): JSX.Element | null {
                             )}
                           </Group>
                         ))}
+                        {pendingUploads.map((pending) => (
+                          <Group
+                            key={pending.id}
+                            gap={4}
+                            className={cx(classes.attachmentChip, pending.status === 'failed' && classes.attachmentChipFailed)}
+                          >
+                            {pending.status === 'uploading' ? (
+                              <Loader size={12} />
+                            ) : (
+                              <span className={classes.attachmentChipIcon}>
+                                {getAttachmentTypeIcon({
+                                  contentType: pending.file.type || 'application/octet-stream',
+                                } as Attachment)}
+                              </span>
+                            )}
+                            <Text size="xs" truncate maw={180}>
+                              {pending.file.name}
+                            </Text>
+                            {pending.status !== 'uploading' && (
+                              <Text size="xs" className={cx(classes.attachmentChipSize, classes.secondaryText)}>
+                                {formatFileSize(pending.file.size)}
+                              </Text>
+                            )}
+                            {pending.status === 'failed' && (
+                              <Text
+                                size="xs"
+                                c="red"
+                                style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                                onClick={() => retryPendingUpload(pending.id)}
+                              >
+                                Retry
+                              </Text>
+                            )}
+                            {!inputDisabled && (
+                              <ActionIcon
+                                size="xs"
+                                variant="subtle"
+                                color="gray"
+                                aria-label="Remove upload"
+                                onClick={() => removePendingUpload(pending.id)}
+                              >
+                                ×
+                              </ActionIcon>
+                            )}
+                          </Group>
+                        ))}
                       </Group>
                     )}
                   </RichTextEditor>
-                </Box>
                 {!inputDisabled && (
-                  <ActionIcon
-                    type="button"
-                    size="1.9rem"
-                    radius="xl"
-                    color="blue"
-                    variant="filled"
-                    className={classes.composeSideButton}
-                    aria-label="Send message"
-                    onClick={performSend}
-                  >
-                    <IconArrowRight size="1.15rem" stroke={1.5} />
-                  </ActionIcon>
+                  <Group justify="space-between" align="center" className={classes.composeActionRow} wrap="nowrap">
+                    <Tooltip label="Attach file" withArrow>
+                      <ActionIcon
+                        type="button"
+                        size={44}
+                        radius="xl"
+                        variant="subtle"
+                        className={classes.composeAttachButton}
+                        aria-label="Attach file"
+                        disabled={isUploading}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <IconPaperclip size={20} stroke={1.8} className={classes.composeAttachIcon} />
+                      </ActionIcon>
+                    </Tooltip>
+                    <ActionIcon
+                      type="button"
+                      size={44}
+                      radius="xl"
+                      color="blue"
+                      variant="filled"
+                      aria-label="Send message"
+                      onClick={performSend}
+                      disabled={isUploading}
+                    >
+                      <IconArrowRight size="1.15rem" stroke={1.5} />
+                    </ActionIcon>
+                  </Group>
                 )}
-              </Group>
-            )}
-          </AttachmentButton>
+              </Box>
         </Form>
         </div>}
       </div>
@@ -896,7 +1011,7 @@ function AttachmentItem(props: { attachment: Attachment; index: number; attachme
             {displayName}
           </Text>
           {fileSize && (
-            <Text size="xs" c="dimmed" className={classes.fileChipSize}>
+            <Text size="xs" className={cx(classes.fileChipSize, classes.secondaryText)}>
               {fileSize}
             </Text>
           )}
@@ -1006,7 +1121,7 @@ function ChatBubble(props: ChatBubbleProps): JSX.Element {
       >
         {senderResource ? getDisplayString(senderResource) : '[Unknown sender]'}
         &nbsp;&middot;&nbsp;
-        <Text span c="dimmed" fz="xs">
+        <Text span fz="xs" className={classes.secondaryText}>
           {Number.isNaN(sentTime.getTime())
             ? ''
             : sentTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
@@ -1020,7 +1135,6 @@ function ChatBubble(props: ChatBubbleProps): JSX.Element {
         <div
           className={cx(classes.chatBubble, showPatientStyling && classes.chatBubblePatient)}
           {...(showPatientStyling && { 'data-chat-sender': 'patient' })}
-          style={showPatientStyling ? { backgroundColor: '#E5F7F7' } : undefined}
         >
           {(content || hasAttachments) && (
             <>
@@ -1051,12 +1165,12 @@ function ChatBubble(props: ChatBubbleProps): JSX.Element {
         </div>
       </div>
       {readStatus === 'read' && showReadReceipt && (
-        <Text fz="xs" c="dimmed" style={{ textAlign: 'right' }} aria-label="Read by recipient">
+        <Text fz="xs" className={classes.secondaryText} style={{ textAlign: 'right' }} aria-label="Read by recipient">
           {formatReadReceipt(communication)}
         </Text>
       )}
       {readStatus === 'unread' && showReadReceipt && (
-        <Text fz="xs" c="dimmed" style={{ textAlign: 'right' }} aria-label="Unread by recipient">
+        <Text fz="xs" className={classes.secondaryText} style={{ textAlign: 'right' }} aria-label="Unread by recipient">
           Sent
         </Text>
       )}

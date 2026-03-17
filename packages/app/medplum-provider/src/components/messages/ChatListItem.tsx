@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import { Box, Group, Stack, Text } from '@mantine/core';
+import { Box, Checkbox, Group, Stack, Text } from '@mantine/core';
 import type { Communication, HumanName, Patient, Reference } from '@medplum/fhirtypes';
 import { MedplumLink, ResourceAvatar, useResource } from '@medplum/react';
 import type { JSX } from 'react';
@@ -36,6 +36,9 @@ interface ChatListItemProps {
   isSelected: boolean;
   isUnread?: boolean;
   reassignedLabel?: string;
+  selectionMode?: boolean;
+  isChecked?: boolean;
+  onToggleChecked?: (threadId: string, checked: boolean) => void;
   getThreadUri: (topic: Communication) => string;
 }
 
@@ -46,6 +49,9 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
     isSelected,
     isUnread = false,
     reassignedLabel,
+    selectionMode = false,
+    isChecked = false,
+    onToggleChecked,
     getThreadUri,
   } = props;
   const patientResource = useResource(topic.subject as Reference<Patient>);
@@ -73,40 +79,62 @@ export const ChatListItem = (props: ChatListItemProps): JSX.Element => {
   );
   const isJsonLikeMessage = !!trimmedMsg && /^\s*\{[\s\S]*\}\s*$/.test(trimmedMsg);
   const safePreview = isOwnershipChangeEvent || isJsonLikeMessage ? 'Thread reassigned' : trimmedMsg;
-  const content = safePreview ? `${senderName}${safePreview}` : `No messages available`;
+  const previewContent = safePreview ? `${senderName}${safePreview}` : `No messages available`;
+
+  const rowContent = (
+    <Group
+      p="xs"
+      align="center"
+      wrap="nowrap"
+      className={cx(classes.contentContainer, {
+        [classes.selected]: isSelected,
+        [classes.unread]: isUnread,
+      })}
+      onClick={() => {
+        if (selectionMode && topic.id) {
+          onToggleChecked?.(topic.id, !isChecked);
+        }
+      }}
+      style={selectionMode ? { cursor: 'pointer' } : undefined}
+    >
+      {selectionMode && topic.id && (
+        <Checkbox
+          checked={isChecked}
+          onChange={(event) => onToggleChecked?.(topic.id as string, event.currentTarget.checked)}
+          onClick={(event) => event.stopPropagation()}
+          aria-label={`Select ${primaryTitle}`}
+        />
+      )}
+      <ResourceAvatar value={topic.subject as Reference<Patient>} radius="xl" size={36} />
+      <Stack gap={0}>
+        <Group gap="xs" wrap="nowrap" align="center">
+          {isUnread && <Box className={classes.unreadDot} aria-hidden />}
+          <Text size="sm" fw={isUnread ? 800 : 400} truncate="end">
+            {primaryTitle}
+          </Text>
+        </Group>
+        <Text size="sm" fw={isUnread ? 600 : 400} lineClamp={2} className={cx(classes.content, classes.secondaryText)}>
+          {previewContent}
+        </Text>
+        {reassignedLabel && (
+          <Text className={classes.reassignedLabel} lineClamp={1}>
+            {reassignedLabel}
+          </Text>
+        )}
+        <Text size="xs" style={{ marginTop: 2 }} fw={isUnread ? 600 : 400} className={classes.secondaryText}>
+          {lastCommunication ? formatChatTimestamp(lastCommunication.sent) : ''}
+        </Text>
+      </Stack>
+    </Group>
+  );
+
+  if (selectionMode) {
+    return rowContent;
+  }
 
   return (
     <MedplumLink to={getThreadUri(topic)} underline="never">
-      <Group
-        p="xs"
-        align="center"
-        wrap="nowrap"
-        className={cx(classes.contentContainer, {
-          [classes.selected]: isSelected,
-          [classes.unread]: isUnread,
-        })}
-      >
-        <ResourceAvatar value={topic.subject as Reference<Patient>} radius="xl" size={36} />
-        <Stack gap={0}>
-          <Group gap="xs" wrap="nowrap" align="center">
-            {isUnread && <Box className={classes.unreadDot} aria-hidden />}
-            <Text size="sm" fw={isUnread ? 800 : 700} truncate="end">
-              {primaryTitle}
-            </Text>
-          </Group>
-          <Text size="sm" fw={isUnread ? 600 : 400} lineClamp={2} className={classes.content}>
-            {content}
-          </Text>
-          {reassignedLabel && (
-            <Text className={classes.reassignedLabel} lineClamp={1}>
-              {reassignedLabel}
-            </Text>
-          )}
-          <Text size="xs" style={{ marginTop: 2 }} fw={isUnread ? 600 : 400}>
-            {lastCommunication ? formatChatTimestamp(lastCommunication.sent) : ''}
-          </Text>
-        </Stack>
-      </Group>
+      {rowContent}
     </MedplumLink>
   );
 };

@@ -31,12 +31,12 @@
 }
 
 .chatInputContainer {
-  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
+  background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-6));
   padding: 6px 8px;
   min-height: 72px;
   flex-shrink: 0;
   position: relative;
-  border-top: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-5));
+  border-top: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
   z-index: 2;
 }
 
@@ -74,14 +74,15 @@
 
 /* Provider / right-aligned bubbles */
 .chatBubble:not(.chatBubblePatient) {
-  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-blue-7));
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-5));
 }
 
-/* Patient / left-aligned message bubbles - red tint (more visible) */
+/* Patient / left-aligned message bubbles - high-contrast teal emphasis */
 .chatBubble.chatBubblePatient,
 .chatBubblePatient {
-  background-color: #E5F7F7 !important;
-  background: #E5F7F7 !important;
+  background-color: #e5f7f7 !important;
+  background: #e5f7f7 !important;
+  color: light-dark(var(--mantine-color-dark), var(--mantine-color-dark-9)) !important;
 }
 
 .chatBubbleContent a {
@@ -167,29 +168,53 @@
 }
 
 .attachmentChip {
-  background-color: #fff;
+  background-color: light-dark(#fff, var(--mantine-color-dark-6));
   border: 1px solid var(--mantine-color-gray-3);
   border-radius: 999px;
-  padding: 2px 6px;
+  padding: 2px 8px;
+  align-items: center;
 }
 
-.composePaperclip {
-  color: #668891;
+.attachmentChipFailed {
+  border-color: var(--mantine-color-red-6);
+  background-color: light-dark(var(--mantine-color-red-0), var(--mantine-color-dark-6));
 }
 
-.composePaperclip:hover {
-  color: #003848;
+.attachmentChipIcon {
+  display: inline-flex;
+  align-items: center;
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-4));
 }
 
-.composeSideButton {
-  margin-bottom: 6px;
+.attachmentChipSize {
+  white-space: nowrap;
+}
+
+.composeActionRow {
+  margin-top: 0;
+  padding: 6px 4px;
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+}
+
+.composeAttachButton {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.composeAttachIcon {
+  color: light-dark(#003848, var(--mantine-color-gray-2));
+}
+
+.composeAttachButton:hover {
+  background-color: light-dark(#e5f7f7, var(--mantine-color-dark-4));
 }
 
 .richTextRoot {
-  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   font-size: var(--mantine-font-size-sm);
   overflow: hidden;
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
 }
 
 .richTextDisabled {
@@ -200,25 +225,24 @@
   border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
   padding: 4px;
   min-height: unset;
-  border-radius: 8px 8px 0 0;
-  justify-content: flex-start;
-
-  & [data-rich-text-editor-controls-group] {
-    gap: 6px;
-  }
+  border-radius: 0;
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
 }
 
 .richTextContent {
   min-height: 36px;
   max-height: 160px;
   overflow-y: auto;
-  border-radius: 0 0 8px 8px;
+  border-radius: 0;
   margin-top: 0;
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
 
   & .tiptap {
     min-height: 36px;
     padding: 4px 8px;
-    border-radius: 0 0 8px 8px;
+    border-radius: 0;
+    background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+    color: light-dark(inherit, var(--mantine-color-gray-2));
   }
 
   & .tiptap p {
@@ -232,4 +256,15 @@
     height: 0;
     pointer-events: none;
   }
+}
+
+.composeUnifiedContainer {
+  border: 1px solid light-dark(#ccd7da, var(--mantine-color-dark-4));
+  border-radius: 8px;
+  background-color: light-dark(var(--mantine-color-white), var(--mantine-color-dark-6));
+  overflow: hidden;
+}
+
+.secondaryText {
+  color: var(--mantine-color-dimmed);
 }

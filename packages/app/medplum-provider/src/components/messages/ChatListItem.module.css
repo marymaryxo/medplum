@@ -15,8 +15,8 @@
   border-left: 3px solid transparent;
   padding-left: 5px;
   text-decoration: none;
-  color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-gray-0));
-  background-color: #ffffff;
+  color: light-dark(#000000, var(--mantine-color-gray-0));
+  background-color: light-dark(#ffffff, var(--mantine-color-dark-8));
 }
 
 .contentContainer:hover {
@@ -29,7 +29,7 @@
 
 .contentContainer.unread {
   font-weight: 600;
-  background-color: #e5f7f7;
+  background-color: light-dark(#ffffff, var(--mantine-color-dark-7));
   border-left-color: #00b4b3;
 }
 
@@ -48,8 +48,12 @@
 }
 
 .reassignedLabel {
-  color: #668891;
+  color: light-dark(#000000, var(--mantine-color-dimmed));
   font-size: 12px;
   line-height: 1.2;
   margin-top: 2px;
+}
+
+.secondaryText {
+  color: light-dark(#000000, var(--mantine-color-dimmed));
 }

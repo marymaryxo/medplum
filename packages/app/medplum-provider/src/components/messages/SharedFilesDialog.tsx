@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright Orangebot, Inc. and Medplum contributors
 // SPDX-License-Identifier: Apache-2.0
-import { ActionIcon, Group, Modal, ScrollArea, Stack, Table, Tabs, Text, TextInput } from '@mantine/core';
+import { ActionIcon, Box, Group, Modal, ScrollArea, Stack, Table, Tabs, Text, TextInput, UnstyledButton } from '@mantine/core';
 import type { Attachment, Communication } from '@medplum/fhirtypes';
 import { useCachedBinaryUrl, useMedplum } from '@medplum/react';
+import { useMediaQuery } from '@mantine/hooks';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { IconDownload, IconFileText, IconPhoto, IconSearch } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronUp, IconDownload, IconFileText, IconPhoto, IconSearch } from '@tabler/icons-react';
 
 const FILENAME_TRUNCATE_LENGTH = 35;
 const CELL_ALIGN_STYLE = { verticalAlign: 'middle' as const };
@@ -67,6 +68,7 @@ function formatDate(sent: string): string {
 }
 
 type FileCategory = 'all' | 'images' | 'documents';
+type DateSortOrder = 'desc' | 'asc';
 
 interface AttachmentWithMeta {
   id: string;
@@ -152,6 +154,52 @@ function FileRow(props: { item: AttachmentWithMeta; medplumBaseUrl: string }): J
   );
 }
 
+function MobileFileRow(props: { item: AttachmentWithMeta; medplumBaseUrl: string }): JSX.Element {
+  const { item } = props;
+  const resolvedUrl = useCachedBinaryUrl(item.attachment.url);
+  const href = getDownloadUrl(resolvedUrl ?? item.attachment.url, props.medplumBaseUrl);
+  const displayName = getAttachmentDisplayName(item.attachment);
+  const senderName = getSenderName(item);
+
+  return (
+    <Box
+      style={{
+        border: '1px solid var(--mantine-color-gray-3)',
+        borderRadius: 8,
+        padding: 10,
+      }}
+    >
+      <Group justify="space-between" align="flex-start" wrap="nowrap">
+        <Group gap={8} wrap="nowrap" style={{ minWidth: 0 }}>
+          <FileTypeIcon attachment={item.attachment} />
+          <Stack gap={2} style={{ minWidth: 0 }}>
+            <Text size="sm" fw={500} truncate="end" title={displayName}>
+              {displayName}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Shared on {formatDate(item.sent)}
+            </Text>
+            <Text size="xs" c="dimmed" truncate="end">
+              Sent by {senderName}
+            </Text>
+          </Stack>
+        </Group>
+        <ActionIcon
+          component="a"
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          variant="subtle"
+          aria-label={href ? `Download ${displayName}` : `No download available for ${displayName}`}
+          disabled={!href}
+        >
+          <IconDownload size={16} />
+        </ActionIcon>
+      </Group>
+    </Box>
+  );
+}
+
 interface SharedFilesDialogProps {
   thread: Communication | undefined;
   opened: boolean;
@@ -161,10 +209,12 @@ interface SharedFilesDialogProps {
 export function SharedFilesDialog(props: SharedFilesDialogProps): JSX.Element {
   const { thread, opened, onClose } = props;
   const medplum = useMedplum();
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const [items, setItems] = useState<AttachmentWithMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [fileTypeFilter, setFileTypeFilter] = useState<FileCategory>('all');
+  const [dateSortOrder, setDateSortOrder] = useState<DateSortOrder>('desc');
 
   const fetchAllCommunications = useCallback(
     async (params: Record<string, string>): Promise<Communication[]> => {
@@ -245,6 +295,7 @@ export function SharedFilesDialog(props: SharedFilesDialogProps): JSX.Element {
     if (opened && thread?.id) {
       setSearchTerm('');
       setFileTypeFilter('all');
+      setDateSortOrder('desc');
       void fetchAttachments();
     }
   }, [opened, thread?.id, fetchAttachments]);
@@ -279,8 +330,20 @@ export function SharedFilesDialog(props: SharedFilesDialogProps): JSX.Element {
     return { all: items.length, images, documents };
   }, [items]);
 
+  const sortedItems = useMemo(() => {
+    const result = [...filteredItems];
+    result.sort((a, b) => {
+      const aMs = new Date(a.sent).getTime();
+      const bMs = new Date(b.sent).getTime();
+      const safeA = Number.isNaN(aMs) ? 0 : aMs;
+      const safeB = Number.isNaN(bMs) ? 0 : bMs;
+      return dateSortOrder === 'desc' ? safeB - safeA : safeA - safeB;
+    });
+    return result;
+  }, [dateSortOrder, filteredItems]);
+
   return (
-    <Modal opened={opened} onClose={onClose} title="Shared files" size="xl">
+    <Modal opened={opened} onClose={onClose} title="Shared files" size={isMobile ? '100%' : 'xl'} fullScreen={isMobile}>
       {loading ? (
         <Text size="sm" c="dimmed">
           Loading...
@@ -306,27 +369,63 @@ export function SharedFilesDialog(props: SharedFilesDialogProps): JSX.Element {
             </Text>
           ) : (
             <>
-              <ScrollArea h={420}>
-                <Table striped highlightOnHover withTableBorder style={{ tableLayout: 'fixed' }}>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 44, textAlign: 'center' }}>Type</Table.Th>
-                      <Table.Th style={CELL_ALIGN_STYLE}>Filename</Table.Th>
-                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 140 }}>Date Shared</Table.Th>
-                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 180 }}>Sent By</Table.Th>
-                      <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 60 }} />
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {filteredItems.map((item) => (
-                      <FileRow key={item.id} item={item} medplumBaseUrl={medplum.getBaseUrl()} />
+              <ScrollArea h={isMobile ? 360 : 420}>
+                {isMobile ? (
+                  <Stack gap="xs">
+                    <Group justify="space-between" align="center" mb={4}>
+                      <Text size="sm" fw={600}>
+                        Files
+                      </Text>
+                      <UnstyledButton
+                        onClick={() => setDateSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                        aria-label={`Sort shared files by date ${dateSortOrder === 'desc' ? 'oldest first' : 'newest first'}`}
+                      >
+                        <Group gap={4} wrap="nowrap">
+                          <Text size="sm" fw={600}>
+                            Shared on
+                          </Text>
+                          {dateSortOrder === 'desc' ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
+                        </Group>
+                      </UnstyledButton>
+                    </Group>
+                    {sortedItems.map((item) => (
+                      <MobileFileRow key={item.id} item={item} medplumBaseUrl={medplum.getBaseUrl()} />
                     ))}
-                  </Table.Tbody>
-                </Table>
+                  </Stack>
+                ) : (
+                  <Table striped highlightOnHover withTableBorder style={{ tableLayout: 'fixed' }}>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 44, textAlign: 'center' }}>Type</Table.Th>
+                        <Table.Th style={CELL_ALIGN_STYLE}>Filename</Table.Th>
+                        <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 140 }}>
+                          <UnstyledButton
+                            onClick={() => setDateSortOrder((prev) => (prev === 'desc' ? 'asc' : 'desc'))}
+                            aria-label={`Sort shared files by date ${dateSortOrder === 'desc' ? 'oldest first' : 'newest first'}`}
+                          >
+                            <Group gap={4} wrap="nowrap">
+                              <Text size="sm" fw={600}>
+                                Shared on
+                              </Text>
+                              {dateSortOrder === 'desc' ? <IconChevronDown size={14} /> : <IconChevronUp size={14} />}
+                            </Group>
+                          </UnstyledButton>
+                        </Table.Th>
+                        <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 180 }}>Sent By</Table.Th>
+                        <Table.Th style={{ ...CELL_ALIGN_STYLE, width: 60 }} />
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {sortedItems.map((item) => (
+                        <FileRow key={item.id} item={item} medplumBaseUrl={medplum.getBaseUrl()} />
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                )}
               </ScrollArea>
               <Group justify="space-between">
                 <Text size="xs" c="dimmed">
-                  Showing {filteredItems.length} of {items.length} files
+                  Showing {sortedItems.length} of {items.length} files
                 </Text>
               </Group>
             </>
