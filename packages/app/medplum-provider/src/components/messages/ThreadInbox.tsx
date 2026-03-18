@@ -164,6 +164,33 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     }
   };
 
+  const handleMoveToInbox = async (): Promise<void> => {
+    try {
+      await handleTopicStatusChangeWithErrorHandling('in-progress');
+      await handleMarkThreadAsUnread();
+      navigate(inProgressUri)?.catch(console.error);
+    } catch (error) {
+      showErrorNotification(error);
+    }
+  };
+
+  const handleMarkThreadAsUnreadWithInboxBehavior = async (): Promise<void> => {
+    try {
+      const wasArchivedTab = isArchivedTab;
+      const wasCompletedThread = selectedThread?.status === 'completed';
+      // Be explicit: if user is in Archived on a completed thread, move it to Inbox first.
+      if (wasArchivedTab && wasCompletedThread) {
+        await handleTopicStatusChangeWithErrorHandling('in-progress');
+      }
+      await handleMarkThreadAsUnread();
+      if (wasArchivedTab) {
+        navigate(inProgressUri)?.catch(console.error);
+      }
+    } catch (error) {
+      showErrorNotification(error);
+    }
+  };
+
   const handleNewTopicCompletion = (message: Communication): void => {
     addThreadMessage(message);
     onNew(message);
@@ -211,6 +238,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     viewedProviderRef?.split('/').pop() ||
     'Provider';
   const canReassignInThisView = isAdminUser && readOnlyMode && !!viewedProviderRef;
+  const showStaticArchivedStatus = !canReassignInThisView && isReassignedAway;
   const canBulkSelect = canReassignInThisView && !isArchivedTab;
   const reassignmentReason = selectedThread?.identifier?.find(
     (id) => id.system === 'https://medplum.com/thread-state/reassign-reason'
@@ -635,46 +663,54 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                             >
                               Shared files
                             </Button>
-                            <Menu position="bottom-end" shadow="md">
-                              <Menu.Target>
-                                <Button
-                                  variant="light"
-                                  size="sm"
-                                  h={32}
-                                  radius="xl"
-                                  className={classes.headerStatusButton}
-                                  rightSection={<IconChevronDown size={16} />}
-                                >
-                                  {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
-                                </Button>
-                              </Menu.Target>
+                            {showStaticArchivedStatus ? (
+                              <Box className={classes.archivedStatusPill}>Archived</Box>
+                            ) : (
+                              <Menu position="bottom-end" shadow="md">
+                                <Menu.Target>
+                                  <Button
+                                    variant="light"
+                                    size="sm"
+                                    h={32}
+                                    radius="xl"
+                                    className={classes.headerStatusButton}
+                                    rightSection={<IconChevronDown size={16} />}
+                                  >
+                                    {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
+                                  </Button>
+                                </Menu.Target>
 
-                              <Menu.Dropdown>
-                                {canReassignInThisView ? (
-                                  <Menu.Item onClick={openReassign}>
-                                    Reassign thread
-                                  </Menu.Item>
-                                ) : (
-                                  <>
-                                    {isArchivedTab && !isReassignedAway && (
-                                      <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}>
-                                        Move to inbox
-                                      </Menu.Item>
-                                    )}
-                                    <Menu.Item
-                                      onClick={() => handleMarkThreadAsUnread()}
-                                    >
-                                      Mark as unread
+                                <Menu.Dropdown>
+                                  {canReassignInThisView ? (
+                                    <Menu.Item onClick={openReassign}>
+                                      Reassign thread
                                     </Menu.Item>
-                                    {!isArchivedTab && (
-                                      <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}>
-                                        Archive
-                                      </Menu.Item>
-                                    )}
-                                  </>
-                                )}
-                              </Menu.Dropdown>
-                            </Menu>
+                                  ) : (
+                                    <>
+                                      {isArchivedTab && (
+                                        <Menu.Item onClick={() => handleMoveToInbox()}>
+                                          Move to inbox
+                                        </Menu.Item>
+                                      )}
+                                      {!isArchivedTab && (
+                                        <Menu.Item
+                                          onClick={() => handleMarkThreadAsUnreadWithInboxBehavior()}
+                                        >
+                                          Mark as unread
+                                        </Menu.Item>
+                                      )}
+                                      {!isArchivedTab && (
+                                        <Menu.Item
+                                          onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}
+                                        >
+                                          Archive
+                                        </Menu.Item>
+                                      )}
+                                    </>
+                                  )}
+                                </Menu.Dropdown>
+                              </Menu>
+                            )}
                           </Group>
                         )}
                       </Flex>
@@ -691,45 +727,53 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                           >
                             Shared files
                           </Button>
-                          <Menu position="bottom-end" shadow="md">
-                            <Menu.Target>
-                              <Button
-                                variant="light"
-                                size="sm"
-                                h={32}
-                                radius="xl"
-                                className={classes.headerStatusButton}
-                                rightSection={<IconChevronDown size={14} />}
-                              >
-                                {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
-                              </Button>
-                            </Menu.Target>
-                            <Menu.Dropdown>
-                              {canReassignInThisView ? (
-                                <Menu.Item onClick={openReassign}>
-                                  Reassign thread
-                                </Menu.Item>
-                              ) : (
-                                <>
-                                  {isArchivedTab && !isReassignedAway && (
-                                    <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}>
-                                      Move to inbox
-                                    </Menu.Item>
-                                  )}
-                                  <Menu.Item
-                                    onClick={() => handleMarkThreadAsUnread()}
-                                  >
-                                    Mark as unread
+                          {showStaticArchivedStatus ? (
+                            <Box className={classes.archivedStatusPill}>Archived</Box>
+                          ) : (
+                            <Menu position="bottom-end" shadow="md">
+                              <Menu.Target>
+                                <Button
+                                  variant="light"
+                                  size="sm"
+                                  h={32}
+                                  radius="xl"
+                                  className={classes.headerStatusButton}
+                                  rightSection={<IconChevronDown size={14} />}
+                                >
+                                  {isArchivedTab ? 'Archived' : getStatusLabel(selectedThread.status)}
+                                </Button>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                {canReassignInThisView ? (
+                                  <Menu.Item onClick={openReassign}>
+                                    Reassign thread
                                   </Menu.Item>
-                                  {!isArchivedTab && (
-                                    <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}>
-                                      Archive
-                                    </Menu.Item>
-                                  )}
-                                </>
-                              )}
-                            </Menu.Dropdown>
-                          </Menu>
+                                ) : (
+                                  <>
+                                    {isArchivedTab && (
+                                      <Menu.Item onClick={() => handleMoveToInbox()}>
+                                        Move to inbox
+                                      </Menu.Item>
+                                    )}
+                                    {!isArchivedTab && (
+                                      <Menu.Item
+                                        onClick={() => handleMarkThreadAsUnreadWithInboxBehavior()}
+                                      >
+                                        Mark as unread
+                                      </Menu.Item>
+                                    )}
+                                    {!isArchivedTab && (
+                                      <Menu.Item
+                                        onClick={() => handleTopicStatusChangeWithErrorHandling('completed')}
+                                      >
+                                        Archive
+                                      </Menu.Item>
+                                    )}
+                                  </>
+                                )}
+                              </Menu.Dropdown>
+                            </Menu>
+                          )}
                         </Group>
                       )}
                     </Stack>
@@ -805,7 +849,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                         excludeHeader={true}
                         inputDisabled={isReassignedAway || readOnlyMode}
                         // @ts-expect-error hideInput is available in locally linked @medplum/react source.
-                        hideInput={readOnlyMode}
+                        hideInput={readOnlyMode || isReassignedAway}
                         attachments={pendingAttachments}
                         onAttachmentsChange={(attachments: Attachment[]) => setPendingAttachments(attachments)}
                         disableAutoMarkAsRead={

@@ -528,16 +528,17 @@ function getThreadSortTimeMs([parent, lastMessage]: [Communication, Communicatio
     parent.meta?.lastUpdated,
     parent.sent,
   ];
+  let maxMs = 0;
   for (const candidate of candidates) {
     if (!candidate) {
       continue;
     }
     const ms = new Date(candidate).getTime();
-    if (!Number.isNaN(ms)) {
-      return ms;
+    if (!Number.isNaN(ms) && ms > maxMs) {
+      maxMs = ms;
     }
   }
-  return 0;
+  return maxMs;
 }
 
 function isUnopenedReassignedArrivalThread(
