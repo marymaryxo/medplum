@@ -10,7 +10,7 @@ import type { JSX } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
-const OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadIds';
+const OPENED_REASSIGNED_THREAD_MARKERS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadMarkers';
 
 interface MessagesNotificationIconProps {
   readonly iconComponent: JSX.Element;
@@ -52,7 +52,7 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
       }
 
       const localUnreadIds = loadUserMarkedUnreadThreadIds(profileRefStr);
-      const openedReassignedThreadIds = loadOpenedReassignedThreadIds(profileRefStr);
+      const openedReassignedThreadMarkers = loadOpenedReassignedThreadMarkers(profileRefStr);
 
       const parentThreads = await searchAllCommunications(
         medplum,
@@ -82,7 +82,7 @@ export function MessagesNotificationIcon(props: MessagesNotificationIconProps): 
         if (
           unreadParentIds.has(parent.id) ||
           localUnreadIds.has(parent.id) ||
-          isUnopenedReassignedArrivalThread(parent, profileRefStr, openedReassignedThreadIds)
+          isUnopenedReassignedArrivalThread(parent, profileRefStr, openedReassignedThreadMarkers)
         ) {
           count++;
         }
@@ -175,9 +175,11 @@ function loadUserMarkedUnreadThreadIds(profileRefStr?: string): Set<string> {
   }
 }
 
-function loadOpenedReassignedThreadIds(profileRefStr?: string): Set<string> {
+function loadOpenedReassignedThreadMarkers(profileRefStr?: string): Set<string> {
   try {
-    const stored = localStorage.getItem(getScopedStorageKey(OPENED_REASSIGNED_THREAD_IDS_STORAGE_KEY, profileRefStr));
+    const stored = localStorage.getItem(
+      getScopedStorageKey(OPENED_REASSIGNED_THREAD_MARKERS_STORAGE_KEY, profileRefStr)
+    );
     if (!stored) {
       return new Set<string>();
     }
@@ -191,9 +193,13 @@ function loadOpenedReassignedThreadIds(profileRefStr?: string): Set<string> {
 function isUnopenedReassignedArrivalThread(
   parent: Communication,
   effectiveProfileRefStr: string | undefined,
-  openedReassignedThreadIds: Set<string>
+  openedReassignedThreadMarkers: Set<string>
 ): boolean {
-  if (!parent.id || !effectiveProfileRefStr || openedReassignedThreadIds.has(parent.id)) {
+  if (!parent.id || !effectiveProfileRefStr) {
+    return false;
+  }
+  const marker = getReassignmentOpenMarker(parent);
+  if (openedReassignedThreadMarkers.has(marker)) {
     return false;
   }
   const hasReassignedMarker = !!parent.identifier?.some(
@@ -203,6 +209,11 @@ function isUnopenedReassignedArrivalThread(
     return false;
   }
   return !!parent.recipient?.some((r) => referenceMatches(r.reference, effectiveProfileRefStr));
+}
+
+function getReassignmentOpenMarker(parent: Communication): string {
+  const reassignedAt = parent.identifier?.find((id) => id.system === 'https://medplum.com/thread-state/reassigned-at')?.value;
+  return reassignedAt ? `${parent.id}:${reassignedAt}` : (parent.id as string);
 }
 
 function referenceMatches(refStr: string | undefined, otherRefStr: string | undefined): boolean {

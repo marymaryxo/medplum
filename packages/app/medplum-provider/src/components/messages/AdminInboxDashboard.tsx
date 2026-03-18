@@ -8,6 +8,9 @@ import { useMedplum, useMedplumProfile } from '@medplum/react';
 import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 
+const USER_MARKED_UNREAD_STORAGE_KEY = 'medplum-provider-userMarkedUnreadThreadIds';
+const OPENED_REASSIGNED_THREAD_MARKERS_STORAGE_KEY = 'medplum-provider-openedReassignedThreadMarkers';
+
 interface AdminInboxDashboardProps {
   onSelectProvider: (providerRef: string) => void;
 }
@@ -16,8 +19,8 @@ interface ProviderRow {
   providerRef: string;
   providerName: string;
   totalActiveThreads: number;
-  unansweredThreadCount: number;
-  oldestUnansweredSent?: string;
+  unreadThreadCount: number;
+  oldestUnreadSent?: string;
 }
 
 export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Element {
@@ -39,6 +42,7 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
         const inboxThreads = await searchAllCommunications(medplum, {
           'part-of:missing': 'true',
           status: 'in-progress',
+          // Keep this aligned with useThreadInbox inbox eligibility.
           'identifier:not': 'ai-message-topic',
           '_has:Communication:part-of:_id:not': 'null',
         });
@@ -49,53 +53,92 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
 
         const activeByProvider = new Map<string, number>();
         const activeThreadIdsByProvider = new Map<string, Set<string>>();
-        const unansweredThreadIdsByProvider = new Map<string, Set<string>>();
-        const oldestUnansweredByProvider = new Map<string, string>();
+        const unreadThreadIdsByProvider = new Map<string, Set<string>>();
+        const oldestUnreadByProvider = new Map<string, string>();
+        const threadTimestampById = new Map<string, string>();
 
         for (const thread of inboxThreads) {
-          const providerRef = normalizeRef(thread.recipient?.[0]?.reference);
           const threadId = thread.id;
-          if (!providerRef || !threadId) {
+          if (!threadId) {
             continue;
           }
-          activeByProvider.set(providerRef, (activeByProvider.get(providerRef) ?? 0) + 1);
-          const activeThreadIds = activeThreadIdsByProvider.get(providerRef) ?? new Set<string>();
-          activeThreadIds.add(threadId);
-          activeThreadIdsByProvider.set(providerRef, activeThreadIds);
+          const threadTimestamp = thread.meta?.lastUpdated ?? thread.sent;
+          if (threadTimestamp) {
+            threadTimestampById.set(threadId, threadTimestamp);
+          }
+          const recipientRefs = getRecipientRefs(thread);
+          for (const providerRef of recipientRefs) {
+            activeByProvider.set(providerRef, (activeByProvider.get(providerRef) ?? 0) + 1);
+            const activeThreadIds = activeThreadIdsByProvider.get(providerRef) ?? new Set<string>();
+            activeThreadIds.add(threadId);
+            activeThreadIdsByProvider.set(providerRef, activeThreadIds);
+          }
+
+          // Mirror provider inbox: reassigned-to-you threads are unread until opened once by that provider.
+          const isReassignedToYou = !!thread.identifier?.some(
+            (id) => id.system === 'https://medplum.com/thread-state' && id.value === 'reassigned-to-you'
+          );
+          if (isReassignedToYou && thread.status === 'in-progress') {
+            const reassignedMarker = getReassignmentOpenMarker(thread);
+            const reassignedAt = thread.identifier?.find(
+              (id) => id.system === 'https://medplum.com/thread-state/reassigned-at'
+            )?.value;
+            for (const providerRef of recipientRefs) {
+              const openedMarkers = loadOpenedReassignedFromStorage(providerRef);
+              if (openedMarkers.has(reassignedMarker)) {
+                continue;
+              }
+              const setForProvider = unreadThreadIdsByProvider.get(providerRef) ?? new Set<string>();
+              setForProvider.add(threadId);
+              unreadThreadIdsByProvider.set(providerRef, setForProvider);
+              setOldestTimestamp(oldestUnreadByProvider, providerRef, reassignedAt ?? threadTimestampById.get(threadId));
+            }
+          }
         }
 
         for (const message of unreadMessages) {
-          const recipientRef = normalizeRef(message.recipient?.[0]?.reference);
-          if (!recipientRef) {
+          const recipientRefs = getRecipientRefs(message);
+          if (recipientRefs.size === 0) {
             continue;
           }
           const senderRef = normalizeRef(message.sender?.reference);
-          if (senderRef && senderRef === recipientRef) {
+          const parentThreadId = getReferenceId(message.partOf?.[0]?.reference);
+          if (!parentThreadId) {
             continue;
           }
-          const parentThreadRef = normalizeRef(message.partOf?.[0]?.reference);
-          if (!parentThreadRef) {
-            continue;
-          }
-          const activeThreadIds = activeThreadIdsByProvider.get(recipientRef);
-          if (!activeThreadIds || !activeThreadIds.has(parentThreadRef.replace('Communication/', ''))) {
-            continue;
-          }
-          const setForProvider = unansweredThreadIdsByProvider.get(recipientRef) ?? new Set<string>();
-          setForProvider.add(parentThreadRef);
-          unansweredThreadIdsByProvider.set(recipientRef, setForProvider);
-          const sent = message.sent;
-          if (sent) {
-            const currentOldest = oldestUnansweredByProvider.get(recipientRef);
-            if (!currentOldest || new Date(sent).getTime() < new Date(currentOldest).getTime()) {
-              oldestUnansweredByProvider.set(recipientRef, sent);
+
+          for (const recipientRef of recipientRefs) {
+            if (senderRef && senderRef === recipientRef) {
+              continue;
             }
+            const activeThreadIds = activeThreadIdsByProvider.get(recipientRef);
+            if (!activeThreadIds || !activeThreadIds.has(parentThreadId)) {
+              continue;
+            }
+            const setForProvider = unreadThreadIdsByProvider.get(recipientRef) ?? new Set<string>();
+            setForProvider.add(parentThreadId);
+            unreadThreadIdsByProvider.set(recipientRef, setForProvider);
+            setOldestTimestamp(oldestUnreadByProvider, recipientRef, message.sent);
+          }
+        }
+
+        // Mirror provider inbox: explicit "Mark as unread" threads are unread even without unread child messages.
+        for (const [providerRef, activeThreadIds] of activeThreadIdsByProvider) {
+          const userMarkedUnreadThreadIds = loadUserMarkedUnreadFromStorage(providerRef);
+          for (const threadId of userMarkedUnreadThreadIds) {
+            if (!activeThreadIds.has(threadId)) {
+              continue;
+            }
+            const setForProvider = unreadThreadIdsByProvider.get(providerRef) ?? new Set<string>();
+            setForProvider.add(threadId);
+            unreadThreadIdsByProvider.set(providerRef, setForProvider);
+            setOldestTimestamp(oldestUnreadByProvider, providerRef, threadTimestampById.get(threadId));
           }
         }
 
         const providerRefs = new Set<string>([
           ...activeByProvider.keys(),
-          ...unansweredThreadIdsByProvider.keys(),
+          ...unreadThreadIdsByProvider.keys(),
         ]);
         if (adminProfileRef) {
           providerRefs.add(adminProfileRef);
@@ -122,8 +165,8 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
             providerRef,
             providerName: resolveProviderName(providerRef, providerNameMap),
             totalActiveThreads: activeByProvider.get(providerRef) ?? 0,
-            unansweredThreadCount: unansweredThreadIdsByProvider.get(providerRef)?.size ?? 0,
-            oldestUnansweredSent: oldestUnansweredByProvider.get(providerRef),
+            unreadThreadCount: unreadThreadIdsByProvider.get(providerRef)?.size ?? 0,
+            oldestUnreadSent: oldestUnreadByProvider.get(providerRef),
           }))
           .sort((a, b) => a.providerName.localeCompare(b.providerName));
 
@@ -159,10 +202,10 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
             <Text fw={600}>{row.providerName}</Text>
           </Table.Td>
           <Table.Td>{row.totalActiveThreads}</Table.Td>
-          <Table.Td>{row.unansweredThreadCount}</Table.Td>
+          <Table.Td>{row.unreadThreadCount}</Table.Td>
           <Table.Td>
-            {row.oldestUnansweredSent ? (
-              <Text size="sm">{formatRelativeAge(row.oldestUnansweredSent)}</Text>
+            {row.oldestUnreadSent ? (
+              <Text size="sm">{formatRelativeAge(row.oldestUnreadSent)}</Text>
             ) : (
               'N/A'
             )}
@@ -310,6 +353,81 @@ function normalizeRef(ref: string | undefined): string | undefined {
     return undefined;
   }
   return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+}
+
+function getReferenceId(ref: string | undefined): string | undefined {
+  if (!ref) {
+    return undefined;
+  }
+  const parts = ref.split('/').filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 1] : undefined;
+}
+
+function getRecipientRefs(resource: Communication): Set<string> {
+  const refs = new Set<string>();
+  for (const recipient of resource.recipient ?? []) {
+    const normalized = normalizeRef(recipient.reference);
+    if (normalized) {
+      refs.add(normalized);
+    }
+  }
+  return refs;
+}
+
+function getScopedStorageKey(baseKey: string, profileRefStr: string | undefined): string {
+  return profileRefStr ? `${baseKey}:${profileRefStr}` : `${baseKey}:anonymous`;
+}
+
+function loadUserMarkedUnreadFromStorage(profileRefStr?: string): Set<string> {
+  try {
+    const stored = sessionStorage.getItem(getScopedStorageKey(USER_MARKED_UNREAD_STORAGE_KEY, profileRefStr));
+    if (stored) {
+      const arr = JSON.parse(stored) as string[];
+      return new Set(Array.isArray(arr) ? arr : []);
+    }
+  } catch {
+    // ignore parse/storage errors
+  }
+  return new Set();
+}
+
+function loadOpenedReassignedFromStorage(profileRefStr?: string): Set<string> {
+  try {
+    const stored = localStorage.getItem(
+      getScopedStorageKey(OPENED_REASSIGNED_THREAD_MARKERS_STORAGE_KEY, profileRefStr)
+    );
+    if (stored) {
+      const arr = JSON.parse(stored) as string[];
+      return new Set(Array.isArray(arr) ? arr : []);
+    }
+  } catch {
+    // ignore parse/storage errors
+  }
+  return new Set();
+}
+
+function getReassignmentOpenMarker(parent: Communication): string {
+  const reassignedAt = parent.identifier?.find((id) => id.system === 'https://medplum.com/thread-state/reassigned-at')?.value;
+  return reassignedAt ? `${parent.id}:${reassignedAt}` : (parent.id as string);
+}
+
+function setOldestTimestamp(byProvider: Map<string, string>, providerRef: string, candidate: string | undefined): void {
+  if (!candidate) {
+    return;
+  }
+  const candidateMs = new Date(candidate).getTime();
+  if (Number.isNaN(candidateMs)) {
+    return;
+  }
+  const current = byProvider.get(providerRef);
+  if (!current) {
+    byProvider.set(providerRef, candidate);
+    return;
+  }
+  const currentMs = new Date(current).getTime();
+  if (Number.isNaN(currentMs) || candidateMs < currentMs) {
+    byProvider.set(providerRef, candidate);
+  }
 }
 
 function formatRelativeAge(isoString: string): string {

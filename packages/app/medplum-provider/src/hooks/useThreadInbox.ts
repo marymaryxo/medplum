@@ -253,7 +253,7 @@ export function useThreadInbox({
         })
       : threadsWithReplies;
 
-    const openedReassignedThreadIds = readOnlyMode ? new Set<string>() : loadOpenedReassignedFromStorage(effectiveProfileRefStr);
+    const openedReassignedThreadIds = loadOpenedReassignedFromStorage(effectiveProfileRefStr);
     const sortedThreads = [...filteredThreads].sort((a, b) => {
       const aReassignedPriority =
         requestedStatus === 'in-progress' &&
@@ -300,8 +300,9 @@ export function useThreadInbox({
           ids.add(partOf.replace('Communication/', ''));
         }
       }
-      // Always include threads user explicitly marked as unread (e.g. provider sent all, no messages to "unread")
-      if (!readOnlyMode) {
+      // Always include threads user explicitly marked as unread (e.g. provider sent all, no messages to "unread").
+      // In delegated admin view, include the provider-scoped stored unread markers so unread state mirrors provider inbox.
+      if (!readOnlyMode || !!recipientRefOverride) {
         for (const id of userMarkedUnreadRef.current) {
           ids.add(id);
         }
@@ -477,14 +478,31 @@ export function useThreadInbox({
 
   const handleMarkThreadAsUnread = async (): Promise<void> => {
     if (!selectedThread?.id) return;
-    // Optimistic update: show unread styling immediately
     const threadIdToMark = selectedThread.id!;
+    // If thread is archived, move it back to Inbox before marking unread.
+    if (selectedThread.status === 'completed') {
+      try {
+        const updatedThread = await medplum.updateResource({
+          ...selectedThread,
+          status: 'in-progress',
+        });
+        setSelectedThread(updatedThread);
+        setThreadMessages((prev) =>
+          prev.map(([parent, lastMsg]) => (parent.id === updatedThread.id ? [updatedThread, lastMsg] : [parent, lastMsg]))
+        );
+      } catch (err) {
+        setError(err as Error);
+        return;
+      }
+    }
+    // Optimistic update: show unread styling immediately
     setUnreadThreadIds((prev) => new Set(prev).add(threadIdToMark));
     setUserMarkedUnreadThreadIds((prev) => {
       const next = new Set(prev).add(threadIdToMark);
       userMarkedUnreadRef.current = next; // Update ref immediately so fetchAllCommunications sees it
       return next;
     });
+    await fetchAllCommunications();
   };
 
   return {

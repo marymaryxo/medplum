@@ -46,7 +46,7 @@ import { useMediaQuery } from '@mantine/hooks';
 import { showErrorNotification } from '../../utils/notifications';
 import { showNotification } from '@mantine/notifications';
 import cx from 'clsx';
-import { Link } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { getPortalMode } from '../../utils/portal-mode';
 
 /**
@@ -92,6 +92,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
   } = props;
 
   const medplum = useMedplum();
+  const navigate = useNavigate();
   const profile = useMedplumProfile();
   const isAdminUser = useMemo(
     () =>
@@ -180,6 +181,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
     ? getDisplayString(newPractitioner)
     : newPractitionerRef?.display || 'another provider';
   const selectedPatient = useResource(selectedThread?.subject as Reference<Patient> | undefined);
+  const selectedPatientId = selectedPatient?.id ?? selectedThread?.subject?.reference?.split('/').pop();
   const selectedThreadLastMessage = useMemo(
     () => threadMessages.find(([parent]) => parent.id === selectedThread?.id)?.[1],
     [threadMessages, selectedThread?.id]
@@ -820,7 +822,16 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
               {selectedThread.subject && showPatientSummary && !isMobile && (
                 <Flex direction="column" w={300} h="100%">
                   <ScrollArea p={0} h="100%" scrollbarSize={10} type="hover" scrollHideDelay={250}>
-                    <PatientSummary key={selectedThread.id} patient={selectedThread.subject as Reference<Patient>} />
+                    <PatientSummary
+                      key={selectedThread.id}
+                      patient={selectedThread.subject as Reference<Patient>}
+                      onClickResource={() => {
+                        if (!selectedPatientId) {
+                          return;
+                        }
+                        navigate(`/Patient/${selectedPatientId}`)?.catch(console.error);
+                      }}
+                    />
                   </ScrollArea>
                 </Flex>
               )}
