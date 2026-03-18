@@ -86,7 +86,7 @@
 }
 
 .chatBubbleContent a {
-  color: #00b4b3;
+  color: light-dark(#007776, #66d2d1);
   text-decoration: underline;
   cursor: pointer;
 }

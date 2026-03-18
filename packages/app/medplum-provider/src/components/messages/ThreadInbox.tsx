@@ -656,7 +656,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                                   </Menu.Item>
                                 ) : (
                                   <>
-                                    {isArchivedTab && (
+                                    {isArchivedTab && !isReassignedAway && (
                                       <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}>
                                         Move to inbox
                                       </Menu.Item>
@@ -711,7 +711,7 @@ export function ThreadInbox(props: ThreadInboxProps): JSX.Element {
                                 </Menu.Item>
                               ) : (
                                 <>
-                                  {isArchivedTab && (
+                                  {isArchivedTab && !isReassignedAway && (
                                     <Menu.Item onClick={() => handleTopicStatusChangeWithErrorHandling('in-progress')}>
                                       Move to inbox
                                     </Menu.Item>

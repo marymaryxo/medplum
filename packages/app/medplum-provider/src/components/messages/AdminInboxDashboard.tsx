@@ -234,10 +234,18 @@ export function AdminInboxDashboard(props: AdminInboxDashboardProps): JSX.Elemen
           <Table striped highlightOnHover withTableBorder>
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Provider</Table.Th>
-                <Table.Th>Inbox Threads</Table.Th>
-                <Table.Th>Unread Threads</Table.Th>
-                <Table.Th>Oldest Unread</Table.Th>
+                <Table.Th style={{ position: 'sticky', top: 0, zIndex: 2, backgroundColor: 'var(--mantine-color-body)' }}>
+                  Provider
+                </Table.Th>
+                <Table.Th style={{ position: 'sticky', top: 0, zIndex: 2, backgroundColor: 'var(--mantine-color-body)' }}>
+                  Inbox Threads
+                </Table.Th>
+                <Table.Th style={{ position: 'sticky', top: 0, zIndex: 2, backgroundColor: 'var(--mantine-color-body)' }}>
+                  Unread Threads
+                </Table.Th>
+                <Table.Th style={{ position: 'sticky', top: 0, zIndex: 2, backgroundColor: 'var(--mantine-color-body)' }}>
+                  Oldest Unread
+                </Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>{tableRows}</Table.Tbody>
